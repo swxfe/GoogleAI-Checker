@@ -1,0 +1,27 @@
+# Build output
+/target/
+/dist/
+/xtask/target/
+
+# Local Throne installation and checker data
+/bin/
+/sandbox_data/
+checker-http-session.bin
+checker-state*.json
+*.key
+*.sqlite
+*.sqlite3
+*.sqlite-wal
+*.sqlite-shm
+*.db
+*.db-wal
+*.db-shm
+
+# Local settings and logs
+*.log
+.env
+.env.*
+/.idea/
+/.vscode/
+.DS_Store
+Thumbs.db

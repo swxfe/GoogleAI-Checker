@@ -1,0 +1,68 @@
+[package]
+name = "googleai-checker"
+version = "0.2.0"
+edition = "2024"
+rust-version = "1.98"
+publish = false
+description = "Check Google AI Studio access through your Throne profiles."
+readme = "README.md"
+
+[features]
+qa-screenshot = []
+
+[dependencies]
+eframe = { version = "0.29.1", default-features = false, features = ["default_fonts"] }
+egui = "0.29.1"
+egui_extras = "0.29.1"
+tokio = { version = "1.40", features = ["rt-multi-thread", "macros", "net", "sync", "time", "io-util", "fs"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio-tungstenite = { version = "0.28", default-features = false, features = ["connect"] }
+image = { version = "0.25", default-features = false, features = ["png"] }
+futures-util = { version = "0.3", default-features = false, features = ["std", "sink"] }
+chacha20poly1305 = "0.10.1"
+hmac = "0.12.1"
+sha2 = "0.10.8"
+base64 = "0.22.1"
+rand = "0.8.5"
+rusqlite = { version = "0.32.1", features = ["bundled", "backup"] }
+url = "2.5.2"
+rfd = "0.15.0"
+tempfile = "3.10"
+anyhow = "1.0.86"
+tracing-subscriber = { version = "0.3.18", default-features = false, features = ["fmt"] }
+fs2 = "0.4"
+single-instance = "0.3.3"
+dunce = "1.0"
+arabic_reshaper = "0.4.2"
+unicode-bidi = "0.3"
+rust-i18n = "4"
+wreq = { version = "0.16.1", features = ["socks", "cookies", "json", "gzip", "brotli", "stream", "system-proxy"] }
+wreq-util = "0.2"
+sha1 = "0.10"
+
+[target.'cfg(not(windows))'.dependencies]
+eframe = { version = "0.29.1", default-features = false, features = ["glow", "wayland", "x11"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+eframe = { version = "0.29.1", default-features = false, features = ["wgpu"] }
+wgpu = { version = "22.1", default-features = false, features = ["dx12"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Cryptography", "Win32_Storage_FileSystem", "Win32_System_JobObjects", "Win32_System_Pipes", "Win32_System_Threading", "Win32_System_Diagnostics_ToolHelp", "Win32_UI_WindowsAndMessaging"] }
+
+[profile.release]
+opt-level = "s"
+lto = "thin"
+codegen-units = 1
+strip = true
+
+[dev-dependencies]
+rcgen = "0.14"
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
+
+[workspace]
+members = ["xtask"]
+default-members = ["."]
+resolver = "3"
