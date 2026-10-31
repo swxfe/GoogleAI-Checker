@@ -118,7 +118,6 @@
   "Throne is busy or unavailable; scan not started": "Throne занят или недоступен; проверка не начата",
   "Managed Throne stopped. Your personal VPN was not changed": "Дочерний Throne и его ядра остановлены. Личный VPN не изменён.",
   "Throne exited. Refresh to start it again": "Дочерний Throne завершился. Можно заново запустить песочницу.",
-  "Preview data; personal Throne is not used": "Демонстрационные данные для проверки отрисовки. Личный Throne не используется.",
   "Starting Throne. Start the scan after profiles load": "Запускается песочница. Повторите запуск теста после загрузки профилей.",
   "Throne switch was not confirmed; scan stopped to restore the original connection": "Переключение Throne не подтверждено: проверка остановлена для восстановления исходного подключения",
   "Restored results: %{count}": "Восстановлено результатов: %{count}",

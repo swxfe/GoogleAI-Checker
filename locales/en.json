@@ -118,7 +118,6 @@
   "Throne is busy or unavailable; scan not started": "Throne is busy or unavailable; scan not started",
   "Managed Throne stopped. Your personal VPN was not changed": "Managed Throne stopped. Your personal VPN was not changed",
   "Throne exited. Refresh to start it again": "Throne exited. Refresh to start it again",
-  "Preview data; personal Throne is not used": "Preview data; personal Throne is not used",
   "Starting Throne. Start the scan after profiles load": "Starting Throne. Start the scan after profiles load",
   "Throne switch was not confirmed; scan stopped to restore the original connection": "Throne switch was not confirmed; scan stopped to restore the original connection",
   "Restored results: %{count}": "Restored results: %{count}",

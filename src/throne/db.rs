@@ -22,6 +22,13 @@ pub struct SyncSummary {
     pub backup: PathBuf,
 }
 const BLOCKED_GROUP: &str = "[AI-BLOCKED] Google AI";
+
+pub(crate) fn tune_connection(connection: &Connection) -> rusqlite::Result<()> {
+    // These limits belong to the connection, leaving Throne's on-disk settings
+    // and journaling mode untouched, including when reading a live WAL.
+    connection
+        .execute_batch("PRAGMA cache_size=-500; PRAGMA mmap_size=0; PRAGMA temp_store=MEMORY;")
+}
 impl ThroneDb {
     pub fn new(path: PathBuf) -> Self {
         Self { db_path: path }
@@ -38,6 +45,7 @@ impl ThroneDb {
                 OpenFlags::SQLITE_OPEN_READ_ONLY
             },
         )?;
+        tune_connection(&conn)?;
         conn.busy_timeout(Duration::from_secs(2))?;
         for (table, required) in [
             (

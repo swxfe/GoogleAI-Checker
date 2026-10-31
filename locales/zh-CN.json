@@ -118,7 +118,6 @@
   "Throne is busy or unavailable; scan not started": "Throne 忙碌或不可用，检测未开始",
   "Managed Throne stopped. Your personal VPN was not changed": "已停止受控 Throne，个人 VPN 未更改",
   "Throne exited. Refresh to start it again": "Throne 已退出，点击刷新以重新启动",
-  "Preview data; personal Throne is not used": "界面预览数据，未使用个人 Throne",
   "Starting Throne. Start the scan after profiles load": "正在启动 Throne，请在配置加载后开始检测",
   "Throne switch was not confirmed; scan stopped to restore the original connection": "Throne 切换未确认，已停止检测以恢复原连接",
   "Restored results: %{count}": "已恢复结果：%{count}",

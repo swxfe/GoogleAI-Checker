@@ -118,7 +118,6 @@
   "Throne is busy or unavailable; scan not started": "Throne مشغول یا در دسترس نیست؛ بررسی شروع نشد",
   "Managed Throne stopped. Your personal VPN was not changed": "Throne برنامه متوقف شد؛ VPN شخصی تغییر نکرد",
   "Throne exited. Refresh to start it again": "Throne بسته شد؛ برای اجرای دوباره تازه‌سازی کنید",
-  "Preview data; personal Throne is not used": "داده نمایشی؛ Throne شخصی استفاده نمی‌شود",
   "Starting Throne. Start the scan after profiles load": "Throne در حال اجرا است؛ پس از بارگذاری پیکربندی‌ها بررسی را شروع کنید",
   "Throne switch was not confirmed; scan stopped to restore the original connection": "تغییر گره تأیید نشد؛ بررسی برای بازگردانی اتصال قبلی متوقف شد",
   "Restored results: %{count}": "نتایج بازیابی‌شده: %{count}",

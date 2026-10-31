@@ -238,6 +238,7 @@ impl Sandbox {
                 .as_nanos();
             let source =
                 Connection::open_with_flags(&database, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+            crate::throne::db::tune_connection(&source)?;
             source.backup(
                 rusqlite::DatabaseName::Main,
                 backup_dir.join(format!("throne-before-autostart-{stamp}.sqlite")),
@@ -500,6 +501,7 @@ fn prepare_settings(paths: &SandboxPaths) -> Result<String> {
 }
 fn prepare_database_settings(database: &Path) -> Result<String> {
     let mut conn = Connection::open(database)?;
+    crate::throne::db::tune_connection(&conn)?;
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT NOT NULL)",
     )?;

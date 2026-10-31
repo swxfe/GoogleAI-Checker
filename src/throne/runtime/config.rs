@@ -61,6 +61,7 @@ impl Source {
     ) -> Result<Self> {
         let mut connection =
             Connection::open_with_flags(database, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+        crate::throne::db::tune_connection(&connection)?;
         connection.busy_timeout(Duration::from_secs(2))?;
         let transaction = connection.transaction()?;
         let settings: HashMap<String, String> = transaction

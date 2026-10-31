@@ -1,4 +1,9 @@
 fn main() {
+    println!("cargo:rerun-if-changed=src/allocator.c");
+    cc::Build::new()
+        .file("src/allocator.c")
+        .include(std::env::var("DEP_MIMALLOC_INCLUDE_DIR").expect("mimalloc headers"))
+        .compile("checker_allocator");
     println!("cargo:rerun-if-changed=throne-version.txt");
     let version = include_str!("throne-version.txt").trim();
     assert!(

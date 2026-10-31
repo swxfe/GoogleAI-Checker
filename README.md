@@ -24,7 +24,7 @@ The checker runs parallel requests to AI Studio through the official Throne core
 
 | System | Build status |
 | --- | --- |
-| Windows x64 (DirectX 12) | ZIP built and checked |
+| Windows x64 | ZIP built and checked |
 | Linux x64 desktop | CI configured; build not yet verified |
 | macOS Intel / Apple Silicon | CI configured; builds not yet verified |
 

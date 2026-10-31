@@ -24,7 +24,7 @@
 
 | 系统 | 构建状态 |
 | --- | --- |
-| Windows x64（DirectX 12） | ZIP 已构建并验证 |
+| Windows x64 | ZIP 已构建并验证 |
 | Linux x64 桌面 | CI 已配置，尚未验证构建 |
 | macOS Intel / Apple Silicon | CI 已配置，尚未验证构建 |
 

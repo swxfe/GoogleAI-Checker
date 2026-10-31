@@ -27,8 +27,8 @@ impl Language {
         display(match self {
             Self::English => "English",
             Self::Russian => "Русский",
-            Self::Chinese => "中文",
-            Self::Persian => "فارسی",
+            Self::Chinese => "Chinese",
+            Self::Persian => "Persian",
         })
     }
     pub fn load(data: &Path) -> Self {
@@ -65,7 +65,11 @@ pub fn display(text: &str) -> String {
         .join("\n")
 }
 
-pub fn install_fonts(ctx: &egui::Context) {
+pub fn install_fonts(ctx: &egui::Context, language: Language) {
+    ctx.set_fonts(font_definitions(language));
+}
+
+fn font_definitions(language: Language) -> egui::FontDefinitions {
     let mut fonts = egui::FontDefinitions::default();
     let system = if cfg!(windows) {
         "C:/Windows/Fonts/segoeui.ttf"
@@ -77,43 +81,72 @@ pub fn install_fonts(ctx: &egui::Context) {
     if let Ok(bytes) = std::fs::read(system) {
         fonts
             .font_data
-            .insert("system-ui".into(), egui::FontData::from_owned(bytes));
+            .insert("system-ui".into(), egui::FontData::from_owned(bytes).into());
         fonts
             .families
             .get_mut(&egui::FontFamily::Proportional)
             .unwrap()
             .insert(0, "system-ui".into());
     }
-    for (name, bytes) in [
-        (
+    let extra = match language {
+        Language::Persian => Some((
             "noto-arabic",
             include_bytes!("../assets/fonts/notosansarabic.ttf").as_slice(),
-        ),
-        (
+        )),
+        Language::Chinese => Some((
             "noto-cjk",
             include_bytes!("../assets/fonts/notosanssc.ttf").as_slice(),
-        ),
-    ] {
+        )),
+        Language::English | Language::Russian => None,
+    };
+    if let Some((name, bytes)) = extra {
         fonts
             .font_data
-            .insert(name.into(), egui::FontData::from_static(bytes));
+            .insert(name.into(), egui::FontData::from_static(bytes).into());
         for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
             fonts.families.get_mut(&family).unwrap().push(name.into());
         }
     }
-    if &*rust_i18n::locale() == "fa" {
+    if language == Language::Persian {
         fonts
             .families
             .get_mut(&egui::FontFamily::Proportional)
             .unwrap()
             .insert(0, "noto-arabic".into());
     }
-    ctx.set_fonts(fonts);
+    fonts
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn fonts_load_only_the_selected_script_and_cover_all_ui_languages() {
+        for language in Language::ALL {
+            let fonts = font_definitions(language);
+            assert_eq!(
+                fonts.font_data.contains_key("noto-cjk"),
+                language == Language::Chinese
+            );
+            assert_eq!(
+                fonts.font_data.contains_key("noto-arabic"),
+                language == Language::Persian
+            );
+            let context = egui::Context::default();
+            context.set_fonts(fonts);
+            let _ = context.run_ui(egui::RawInput::default(), |ui| {
+                let text = match language {
+                    Language::English => "English",
+                    Language::Russian => "Русский",
+                    Language::Chinese => "中文配置",
+                    Language::Persian => "فارسی",
+                };
+                ui.ctx().fonts_mut(|fonts| {
+                    assert!(fonts.has_glyphs(&egui::FontId::proportional(14.0), &display(text)))
+                });
+            });
+        }
+    }
     #[test]
     fn language_default_persistence_and_persian_display() {
         let dir = tempfile::tempdir().unwrap();

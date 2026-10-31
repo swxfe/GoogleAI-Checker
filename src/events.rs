@@ -47,7 +47,7 @@ mod tests {
         };
         let context = egui::Context::default();
         for _ in 0..2 {
-            let _ = context.run(egui::RawInput::default(), |_| {});
+            let _ = context.run_ui(egui::RawInput::default(), |_| {});
         }
         let wakes = Arc::new(AtomicUsize::new(0));
         let count = wakes.clone();

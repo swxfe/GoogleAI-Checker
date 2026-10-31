@@ -8,6 +8,7 @@ use crate::{
         verdicts::{AiVerdict, NodeCheckResult, latency_color, protocol_badge_colors},
     },
     events::EventSender,
+    executor::BackgroundRuntime,
     i18n::{self, Language, tr},
     sandbox::{PROXY_ADDR, Sandbox, SandboxPaths},
     state::{Entry, Snapshot, StateStore},
@@ -28,10 +29,7 @@ use std::{
     },
     time::Duration,
 };
-use tokio::{
-    runtime::Runtime,
-    sync::mpsc::{self, UnboundedReceiver, UnboundedSender},
-};
+use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 
 enum UiEvent {
     Data {
@@ -91,7 +89,7 @@ impl Row {
 }
 pub struct CheckerApp {
     flags: crate::flags::Flags,
-    runtime: Runtime,
+    runtime: BackgroundRuntime,
     sandbox: Option<Arc<Sandbox>>,
     rx: UnboundedReceiver<UiEvent>,
     tx: EventSender<UiEvent>,
@@ -138,13 +136,10 @@ pub struct CheckerApp {
     message: String,
     errors: Vec<String>,
     release: String,
-    smoke_deadline: Option<std::time::Instant>,
-    #[cfg(feature = "qa-screenshot")]
-    qa_frame: usize,
 }
 impl CheckerApp {
-    pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        cc.egui_ctx.set_visuals(egui::Visuals::dark());
+    pub fn new(ctx: &egui::Context) -> Self {
+        ctx.set_visuals(egui::Visuals::dark());
         let sandbox = SandboxPaths::beside_executable()
             .and_then(Sandbox::new)
             .map(Arc::new);
@@ -158,20 +153,12 @@ impl CheckerApp {
         if let Some(manager) = &sandbox {
             login::migrate_legacy_marker(&manager.paths.browser);
         }
-        let mut language = sandbox
+        let language = sandbox
             .as_ref()
             .map(|s| Language::load(&s.paths.data))
             .unwrap_or_default();
-        if cfg!(feature = "qa-screenshot")
-            && let Ok(code) = std::env::var("GOOGLEAI_CHECKER_QA_LANGUAGE")
-        {
-            language = Language::ALL
-                .into_iter()
-                .find(|l| l.code() == code)
-                .unwrap_or_default();
-        }
         rust_i18n::set_locale(language.code());
-        i18n::install_fonts(&cc.egui_ctx);
+        i18n::install_fonts(ctx, language);
         let release = crate::THRONE_VERSION.trim().to_owned();
         let state_store = match sandbox
             .as_ref()
@@ -192,7 +179,7 @@ impl CheckerApp {
             }
         };
         let (tx, rx) = mpsc::unbounded_channel();
-        let tx = EventSender::with_ui(tx, cc.egui_ctx.clone());
+        let tx = EventSender::with_ui(tx, ctx.clone());
         let detected_browsers = BrowserDetector::detect_all();
         let selected_browser = sandbox
             .as_ref()
@@ -214,23 +201,16 @@ impl CheckerApp {
                 .is_some_and(|s| login::has_saved_session(&s.paths.browser, browser))
         });
         let (scan_tx, scan_rx) = mpsc::unbounded_channel();
-        let scan_tx = EventSender::with_ui(scan_tx, cc.egui_ctx.clone());
-        let smoke = std::env::args().any(|a| a == "--smoke-test");
-        let qa = cfg!(feature = "qa-screenshot")
-            && std::env::var_os("GOOGLEAI_CHECKER_SCREENSHOT_TO").is_some();
+        let scan_tx = EventSender::with_ui(scan_tx, ctx.clone());
         let mut app = Self {
-            runtime: tokio::runtime::Builder::new_multi_thread()
-                .worker_threads(2)
-                .enable_all()
-                .build()
-                .expect("Tokio runtime"),
+            runtime: BackgroundRuntime::new().expect("Tokio runtime"),
             sandbox,
             rx,
             tx,
             scan_rx,
             scan_tx,
             rows: vec![],
-            flags: crate::flags::Flags::new(&cc.egui_ctx),
+            flags: crate::flags::Flags::new(),
             state_store,
             state_cache,
             fingerprints: HashMap::new(),
@@ -273,67 +253,15 @@ impl CheckerApp {
             message,
             errors: vec![],
             release,
-            smoke_deadline: smoke.then(|| std::time::Instant::now() + Duration::from_secs(3)),
-            #[cfg(feature = "qa-screenshot")]
-            qa_frame: 0,
         };
-        if !smoke
-            && !qa
-            && app
-                .sandbox
-                .as_ref()
-                .is_some_and(|s| s.direct_database().is_some() || s.executable().is_some())
+        if app
+            .sandbox
+            .as_ref()
+            .is_some_and(|s| s.direct_database().is_some() || s.executable().is_some())
         {
             app.load();
         }
-        #[cfg(feature = "qa-screenshot")]
-        if qa {
-            cc.egui_ctx
-                .style_mut(|style| style.interaction.tooltip_delay = 60.0);
-            app.prepare_qa();
-        }
         app
-    }
-    #[cfg(feature = "qa-screenshot")]
-    fn prepare_qa(&mut self) {
-        let mut profiles = crate::subscription::parser::SubscriptionParser::get_sample_profiles();
-        for (index, (profile, name)) in profiles
-            .iter_mut()
-            .zip([
-                "🇪🇪 Estonia #1",
-                "🇺🇸 Los Angeles #2",
-                "🇩🇪 Frankfurt #3",
-                "🇯🇵 Tokyo #4",
-                "🇷🇺 Moscow #5",
-                "🇨🇳 Shanghai #6",
-                "🇳🇱 Amsterdam #7",
-                "🇸🇬 Singapore #8",
-            ])
-            .enumerate()
-        {
-            profile.name = name.into();
-            profile.address = format!("192.0.2.{}:443", index + 1);
-        }
-        self.set_profiles(profiles, vec![]);
-        for ((row, status), latency) in self
-            .rows
-            .iter_mut()
-            .zip([
-                AiVerdict::Unlocked,
-                AiVerdict::Unlocked,
-                AiVerdict::Unlocked,
-                AiVerdict::ConnectionError,
-                AiVerdict::Geoblock,
-                AiVerdict::Geoblock,
-                AiVerdict::Unlocked,
-                AiVerdict::Unlocked,
-            ])
-            .zip([53, 137, 68, 0, 0, 0, 82, 164])
-        {
-            row.result.verdict = status;
-            row.result.latency_ms = status.is_working().then_some(latency);
-        }
-        self.message = "Preview data; personal Throne is not used".into();
     }
     fn manager(&mut self) -> Option<Arc<Sandbox>> {
         if self.sandbox.is_none() {
@@ -979,43 +907,10 @@ impl CheckerApp {
         }
     }
 }
-impl eframe::App for CheckerApp {
-    fn clear_color(&self, visuals: &egui::Visuals) -> [f32; 4] {
-        // Cleared frames match the opaque panel background, including resize
-        // and restore frames before the UI has filled the whole surface.
-        egui::Rgba::from(visuals.panel_fill).to_array()
-    }
-
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        #[cfg(feature = "qa-screenshot")]
-        if let Ok(path) = std::env::var("GOOGLEAI_CHECKER_SCREENSHOT_TO") {
-            self.qa_frame += 1;
-            ctx.request_repaint();
-            if self.qa_frame == 60 {
-                ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot);
-            }
-            for event in ctx.input(|i| i.events.clone()) {
-                if let egui::Event::Screenshot { image, .. } = event {
-                    let rgba: Vec<u8> = image.pixels.iter().flat_map(|p| p.to_array()).collect();
-                    image::save_buffer(
-                        path.clone(),
-                        &rgba,
-                        image.width() as u32,
-                        image.height() as u32,
-                        image::ColorType::Rgba8,
-                    )
-                    .expect("GUI screenshot");
-                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                }
-            }
-        }
-        if self
-            .smoke_deadline
-            .is_some_and(|d| std::time::Instant::now() >= d)
-        {
-            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-        }
-        self.events(ctx);
+impl CheckerApp {
+    pub fn update(&mut self, ui: &mut egui::Ui) {
+        let ctx = ui.ctx().clone();
+        self.events(&ctx);
         if ctx.input(|i| i.viewport().close_requested()) {
             self.persist_state();
             self.stop.store(true, Ordering::SeqCst);
@@ -1034,14 +929,12 @@ impl eframe::App for CheckerApp {
         if self.closing && !self.busy {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
-        ctx.request_repaint_after(Duration::from_millis(
-            if self.busy || self.copying || self.exporting {
-                250
-            } else {
-                1000
-            },
-        ));
-        egui::TopBottomPanel::top("header").show(ctx, |ui| {
+        if self.busy || self.copying || self.exporting {
+            ctx.request_repaint_after(Duration::from_millis(250));
+        } else if self.running || self.scanning {
+            ctx.request_repaint_after(Duration::from_secs(1));
+        }
+        egui::Panel::top("header").show_inside(ui, |ui| {
             ui.add_space(10.0);
             ui.heading("Google AI Checker");
             ui.add_space(6.0);
@@ -1055,7 +948,7 @@ impl eframe::App for CheckerApp {
                 ));
             }
         });
-        egui::TopBottomPanel::bottom("status").show(ctx, |ui| {
+        egui::Panel::bottom("status").show_inside(ui, |ui| {
             ui.add_space(5.0);
             ui.label(tr(&self.message).chars().take(140).collect::<String>())
                 .on_hover_text(tr(&self.message));
@@ -1072,7 +965,7 @@ impl eframe::App for CheckerApp {
                 });
             ui.add_space(5.0);
         });
-        settings_panel(ctx, |ui| {
+        settings_panel(ui, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| {
                     ui.small(tr("Language"));
                     let previous_language = self.language;
@@ -1087,7 +980,7 @@ impl eframe::App for CheckerApp {
                         });
                     if previous_language != self.language {
                         rust_i18n::set_locale(self.language.code());
-                        i18n::install_fonts(ctx);
+                        i18n::install_fonts(&ctx, self.language);
                         if let Some(manager) = &self.sandbox
                             && let Err(error) = self.language.save(&manager.paths.data) {
                                 self.message = error.to_string();
@@ -1262,7 +1155,7 @@ impl eframe::App for CheckerApp {
                     });
                 });
         });
-        egui::CentralPanel::default().show(ctx, |ui| {
+        egui::CentralPanel::default().show_inside(ui, |ui| {
             ui.add_enabled_ui(!self.busy, |ui| {
                 ui.horizontal_wrapped(|ui| {
                     egui::ComboBox::from_id_salt("group")
@@ -1473,7 +1366,7 @@ impl eframe::App for CheckerApp {
                                     if ui.button(tr("Copy the original configuration JSON")).clicked()
                                     {
                                         copy_id = Some(r.profile.id);
-                                        ui.close_menu();
+                                        ui.close();
                                     }
                                 });
                         });
@@ -1518,7 +1411,7 @@ impl eframe::App for CheckerApp {
                             ui.horizontal(|ui| {
                                 let copy = egui::Button::new(tr("Copy"))
                                     .min_size(egui::vec2(76.0, 26.0))
-                                    .rounding(6.0)
+                                    .corner_radius(6.0)
                                     .fill(Color32::from_rgb(40, 58, 82))
                                     .stroke(egui::Stroke::new(
                                         1.0_f32,
@@ -1539,7 +1432,7 @@ impl eframe::App for CheckerApp {
                                             && r.eligible(),
                                         egui::Button::new("↻")
                                             .min_size(egui::vec2(30.0, 26.0))
-                                            .rounding(6.0),
+                                            .corner_radius(6.0),
                                     )
                                     .on_hover_text(tr("Recheck this node only"))
                                     .clicked()
@@ -1572,14 +1465,15 @@ const SETTINGS_MIN_WIDTH: f32 = 225.0;
 const SETTINGS_MAX_WIDTH: f32 = 420.0;
 
 fn settings_panel<R>(
-    ctx: &egui::Context,
+    ui: &mut egui::Ui,
     add_contents: impl FnOnce(&mut egui::Ui) -> R,
 ) -> egui::InnerResponse<R> {
+    let ctx = ui.ctx().clone();
     let id = egui::Id::new("settings");
     let resize_id = id.with("bounded_resize");
-    let available = ctx.available_rect();
+    let available = ui.available_rect_before_wrap();
     let max_width = (available.width() * 0.45).clamp(SETTINGS_MIN_WIDTH, SETTINGS_MAX_WIDTH);
-    let mut width = egui::containers::panel::PanelState::load(ctx, id)
+    let mut width = egui::containers::panel::PanelState::load(&ctx, id)
         .map_or(SETTINGS_MIN_WIDTH, |state| state.rect.width())
         .clamp(SETTINGS_MIN_WIDTH, max_width);
     // Read the current interaction before laying out either panel. A signed
@@ -1590,18 +1484,12 @@ fn settings_panel<R>(
     {
         width = (pointer.x - available.left()).clamp(SETTINGS_MIN_WIDTH, max_width);
     }
-    let panel = egui::SidePanel::left(id)
+    let panel = egui::Panel::left(id)
         .resizable(false)
-        .exact_width(width)
+        .exact_size(width)
         .show_separator_line(false)
-        .show(ctx, add_contents);
+        .show_inside(ui, add_contents);
     let rect = panel.response.rect;
-    let ui = egui::Ui::new(
-        ctx.clone(),
-        egui::LayerId::background(),
-        resize_id.with("ui"),
-        egui::UiBuilder::new().max_rect(available),
-    );
     // Register after the contents so the scroll area cannot capture the handle.
     let handle = egui::Rect::from_x_y_ranges(rect.right()..=rect.right(), rect.y_range()).expand2(
         egui::vec2(ui.style().interaction.resize_grab_radius_side, 0.0),
@@ -1692,10 +1580,10 @@ fn last_checked(checked_at: Option<u64>) -> String {
     i18n::display(&rust_i18n::t!(key, count = count))
 }
 fn badge(ui: &mut egui::Ui, text: &str, colors: (Color32, Color32)) -> egui::Response {
-    egui::Frame::none()
+    egui::Frame::NONE
         .fill(colors.0)
-        .rounding(4.0)
-        .inner_margin(egui::Margin::symmetric(6.0, 3.0))
+        .corner_radius(4.0)
+        .inner_margin(egui::Margin::symmetric(6, 3))
         .show(ui, |ui| {
             ui.label(RichText::new(text).color(colors.1));
         })
@@ -1761,14 +1649,14 @@ mod ui_logic_tests {
             .flat_map(|language| [850.0, 1160.0].map(|width| (language, width)))
         {
             let ctx = egui::Context::default();
-            i18n::install_fonts(&ctx);
+            i18n::install_fonts(&ctx, language);
             let label = i18n::display(&rust_i18n::t!("Timeout, s", locale = language.code()));
             let mut timeout = 8.0;
             let mut time = 0.0;
             let mut frame = |events| {
                 time += 1.0 / 60.0;
                 let mut rects = None;
-                let _ = ctx.run(
+                let _ = ctx.run_ui(
                     egui::RawInput {
                         screen_rect: Some(egui::Rect::from_min_size(
                             egui::Pos2::ZERO,
@@ -1778,8 +1666,8 @@ mod ui_logic_tests {
                         events,
                         ..Default::default()
                     },
-                    |ctx| {
-                        let panel = settings_panel(ctx, |ui| {
+                    |ui| {
+                        let panel = settings_panel(ui, |ui| {
                             let clip = ui.clip_rect();
                             egui::ScrollArea::vertical().show(ui, |ui| {
                                 egui::ComboBox::from_id_salt("language")
@@ -1796,7 +1684,7 @@ mod ui_logic_tests {
                             });
                             clip
                         });
-                        let center = egui::CentralPanel::default().show(ctx, |_| {});
+                        let center = egui::CentralPanel::default().show_inside(ui, |_| {});
                         rects = Some((panel.response.rect, panel.inner, center.response.rect));
                     },
                 );

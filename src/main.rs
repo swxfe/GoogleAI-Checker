@@ -2,18 +2,29 @@
 mod app;
 mod browser;
 mod checker;
+mod desktop;
 mod events;
+mod executor;
 mod flags;
 mod i18n;
 mod sandbox;
 mod state;
-#[cfg(feature = "qa-screenshot")]
-mod subscription;
 mod throne;
 rust_i18n::i18n!("locales", fallback = "en");
 const THRONE_VERSION: &str = env!("CHECKER_THRONE_VERSION");
 
-fn main() -> eframe::Result {
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
+unsafe extern "C" {
+    fn checker_allocator_configure();
+}
+
+fn main() -> anyhow::Result<()> {
+    // Only changes allocator policy; run before creating application threads.
+    unsafe {
+        checker_allocator_configure();
+    }
     if std::env::args_os().nth(1).as_deref() == Some(std::ffi::OsStr::new("--checker-core-host")) {
         // The host owns the core IPC peer and process tree, without creating a GUI.
         std::process::exit(throne::runtime::host::entry());
@@ -23,7 +34,7 @@ fn main() -> eframe::Result {
         Ok(instance) => instance,
         Err(error) => {
             eprintln!("Cannot acquire application instance lock: {error}");
-            return Err(eframe::Error::AppCreation(Box::new(error)));
+            return Err(error.into());
         }
     };
     if !instance.is_single() {
@@ -32,36 +43,7 @@ fn main() -> eframe::Result {
     tracing_subscriber::fmt()
         .with_max_level(tracing_subscriber::filter::LevelFilter::WARN)
         .init();
-    eframe::run_native(
-        "Google AI Checker",
-        native_options(),
-        Box::new(|cc| Ok(Box::new(app::CheckerApp::new(cc)))),
-    )
-}
-
-fn native_options() -> eframe::NativeOptions {
-    eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_inner_size([1160.0, 760.0])
-            .with_min_inner_size([850.0, 600.0])
-            .with_transparent(false),
-        vsync: true,
-        dithering: false,
-        #[cfg(windows)]
-        renderer: eframe::Renderer::Wgpu,
-        #[cfg(windows)]
-        wgpu_options: eframe::egui_wgpu::WgpuConfiguration {
-            // Use the Windows compositor's DirectX swap chain, avoiding WGL
-            // buffer swaps when this event-driven window wakes from idle.
-            supported_backends: eframe::wgpu::Backends::DX12,
-            present_mode: eframe::wgpu::PresentMode::Fifo,
-            desired_maximum_frame_latency: Some(2),
-            ..Default::default()
-        },
-        #[cfg(not(windows))]
-        renderer: eframe::Renderer::Glow,
-        ..Default::default()
-    }
+    desktop::run()
 }
 
 #[cfg(test)]

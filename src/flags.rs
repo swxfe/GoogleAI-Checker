@@ -10,35 +10,62 @@ const FLAG: usize = 40;
 
 pub struct Flags {
     texture: Option<TextureHandle>,
+    high_resolution: bool,
 }
 impl Flags {
-    pub fn new(context: &egui::Context) -> Self {
-        let texture = image::load_from_memory(PNG).ok().map(|image| {
-            let rgba = image.into_rgba8();
-            context.load_texture(
-                "country-flags",
-                ColorImage::from_rgba_unmultiplied(
-                    [rgba.width() as usize, rgba.height() as usize],
-                    rgba.as_raw(),
-                ),
-                TextureOptions::LINEAR,
-            )
-        });
-        Self { texture }
+    pub fn new() -> Self {
+        Self {
+            texture: None,
+            high_resolution: false,
+        }
     }
-    pub fn label(&self, ui: &mut Ui, name: &str) -> Response {
+    fn load_texture(context: &egui::Context) -> Option<TextureHandle> {
+        image::load_from_memory(PNG).ok().map(|image| {
+            let image = if context.pixels_per_point() <= 1.25 {
+                // A 26.7 px sprite covers the 22 pt widget at ordinary DPI.
+                // Keep the original sprites on high-DPI displays.
+                let scaled = image.resize_exact(
+                    image.width() * 2 / 3,
+                    image.height() * 2 / 3,
+                    image::imageops::FilterType::Triangle,
+                );
+                drop(image);
+                scaled
+            } else {
+                image
+            };
+            let rgba = image.into_rgba8();
+            let image = ColorImage::from_rgba_unmultiplied(
+                [rgba.width() as usize, rgba.height() as usize],
+                rgba.as_raw(),
+            );
+            drop(rgba);
+            context.load_texture("country-flags", image, TextureOptions::LINEAR)
+        })
+    }
+    pub fn label(&mut self, ui: &mut Ui, name: &str) -> Response {
+        let parts = parts(name);
+        let high_resolution = ui.ctx().pixels_per_point() > 1.25;
+        if (self.texture.is_none() || self.high_resolution != high_resolution)
+            && parts.iter().any(|part| matches!(part, Part::Flag(_)))
+        {
+            self.texture = Self::load_texture(ui.ctx());
+            self.high_resolution = high_resolution;
+        }
         let Some(texture) = &self.texture else {
             return ui.label(crate::i18n::display(name));
         };
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 0.0;
-            for part in parts(name) {
+            for part in parts {
                 match part {
                     Part::Text(text) => {
                         ui.label(crate::i18n::display(text));
                     }
                     Part::Flag(index) => {
-                        let [width, height] = texture.size();
+                        // Normalized coordinates stay identical after scaling.
+                        let width = COLUMNS * CELL;
+                        let height = (CODES.len() / 2).div_ceil(COLUMNS) * CELL;
                         let x = index % COLUMNS * CELL + PADDING;
                         let y = index / COLUMNS * CELL + PADDING;
                         let uv = Rect::from_min_max(
@@ -116,6 +143,34 @@ fn parts(name: &str) -> Vec<Part<'_>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn atlas_is_lazy_reused_and_replaced_without_leaking_on_dpi_changes() {
+        let context = egui::Context::default();
+        let mut flags = Flags::new();
+        let _ = context.run_ui(egui::RawInput::default(), |ui| {
+            flags.label(ui, "Example");
+        });
+        assert!(flags.texture.is_none());
+        let _ = context.run_ui(egui::RawInput::default(), |ui| {
+            flags.label(ui, "🇪🇪 Estonia");
+        });
+        let texture = flags.texture.as_ref().unwrap();
+        assert_eq!(texture.size(), [512, 544]);
+        let id = texture.id();
+        let count = context.tex_manager().read().num_allocated();
+        let _ = context.run_ui(egui::RawInput::default(), |ui| {
+            flags.label(ui, "🇨🇳 China");
+        });
+        assert_eq!(flags.texture.as_ref().unwrap().id(), id);
+        context.set_pixels_per_point(2.0);
+        let _ = context.run_ui(egui::RawInput::default(), |ui| {
+            flags.label(ui, "🇮🇷 Iran");
+        });
+        assert_eq!(flags.texture.as_ref().unwrap().size(), [768, 816]);
+        assert_ne!(flags.texture.as_ref().unwrap().id(), id);
+        assert_eq!(context.tex_manager().read().num_allocated(), count);
+    }
+
     #[test]
     fn flag_pairs_are_images_and_profile_text_is_preserved() {
         assert_eq!(
