@@ -1072,16 +1072,14 @@ impl eframe::App for CheckerApp {
                 });
             ui.add_space(5.0);
         });
-        egui::SidePanel::left("settings")
-            .resizable(true)
-            .default_width(225.0)
-            .show(ctx, |ui| {
-                egui::ScrollArea::vertical().show(ui, |ui| {
+        settings_panel(ctx, |ui| {
+            egui::ScrollArea::vertical().show(ui, |ui| {
                     ui.small(tr("Language"));
                     let previous_language = self.language;
                     egui::ComboBox::from_id_salt("language")
                         .selected_text(self.language.name())
                         .width(ui.available_width())
+                        .truncate()
                         .show_ui(ui, |ui| {
                             for language in Language::ALL {
                                 ui.selectable_value(&mut self.language, language, language.name());
@@ -1152,6 +1150,7 @@ impl eframe::App for CheckerApp {
                         let mut chosen_browser = None;
                         egui::ComboBox::from_id_salt("detected-browser")
                             .width(ui.available_width())
+                            .truncate()
                             .selected_text(
                                 self.detected_browsers
                                     .iter()
@@ -1221,7 +1220,7 @@ impl eframe::App for CheckerApp {
                         );
                         ui.separator();
                         ui.heading(tr("Scan"));
-                        ui.add(egui::Slider::new(&mut self.timeout, 3.0..=12.0).text(tr("Timeout, s"))).on_hover_text(tr("In list order: finish each node before the next. Single check: selected limit; batch: up to 4 s per node."));
+                        timeout_slider(ui, &mut self.timeout, &tr("Timeout, s")).on_hover_text(tr("In list order: finish each node before the next. Single check: selected limit; batch: up to 4 s per node."));
                         ui.add_space(10.0);
                         egui::CollapsingHeader::new(tr("Advanced")).show(ui, |ui| {
                             if ui
@@ -1262,7 +1261,7 @@ impl eframe::App for CheckerApp {
                         });
                     });
                 });
-            });
+        });
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.add_enabled_ui(!self.busy, |ui| {
                 ui.horizontal_wrapped(|ui| {
@@ -1569,6 +1568,90 @@ impl Drop for CheckerApp {
         }
     }
 }
+const SETTINGS_MIN_WIDTH: f32 = 225.0;
+const SETTINGS_MAX_WIDTH: f32 = 420.0;
+
+fn settings_panel<R>(
+    ctx: &egui::Context,
+    add_contents: impl FnOnce(&mut egui::Ui) -> R,
+) -> egui::InnerResponse<R> {
+    let id = egui::Id::new("settings");
+    let resize_id = id.with("bounded_resize");
+    let available = ctx.available_rect();
+    let max_width = (available.width() * 0.45).clamp(SETTINGS_MIN_WIDTH, SETTINGS_MAX_WIDTH);
+    let mut width = egui::containers::panel::PanelState::load(ctx, id)
+        .map_or(SETTINGS_MIN_WIDTH, |state| state.rect.width())
+        .clamp(SETTINGS_MIN_WIDTH, max_width);
+    // Read the current interaction before laying out either panel. A signed
+    // distance keeps dragging outside the window from reversing the resize.
+    if let Some(response) = ctx.read_response(resize_id)
+        && response.dragged()
+        && let Some(pointer) = response.interact_pointer_pos()
+    {
+        width = (pointer.x - available.left()).clamp(SETTINGS_MIN_WIDTH, max_width);
+    }
+    let panel = egui::SidePanel::left(id)
+        .resizable(false)
+        .exact_width(width)
+        .show_separator_line(false)
+        .show(ctx, add_contents);
+    let rect = panel.response.rect;
+    let ui = egui::Ui::new(
+        ctx.clone(),
+        egui::LayerId::background(),
+        resize_id.with("ui"),
+        egui::UiBuilder::new().max_rect(available),
+    );
+    // Register after the contents so the scroll area cannot capture the handle.
+    let handle = egui::Rect::from_x_y_ranges(rect.right()..=rect.right(), rect.y_range()).expand2(
+        egui::vec2(ui.style().interaction.resize_grab_radius_side, 0.0),
+    );
+    let response = ui.interact(handle, resize_id, egui::Sense::drag());
+    if response.hovered() || response.dragged() {
+        ctx.set_cursor_icon(if width <= SETTINGS_MIN_WIDTH {
+            egui::CursorIcon::ResizeEast
+        } else if width >= max_width {
+            egui::CursorIcon::ResizeWest
+        } else {
+            egui::CursorIcon::ResizeHorizontal
+        });
+    }
+    let visuals = &ui.visuals().widgets;
+    let stroke = if response.dragged() {
+        visuals.active.fg_stroke
+    } else if response.hovered() {
+        visuals.hovered.fg_stroke
+    } else {
+        visuals.noninteractive.bg_stroke
+    };
+    let x = ui.painter().round_to_pixel_center(rect.right()) - 1.0;
+    ui.painter().vline(x, rect.y_range(), stroke);
+    panel
+}
+
+fn timeout_slider(ui: &mut egui::Ui, timeout: &mut f32, label: &str) -> egui::Response {
+    let label_width = egui::WidgetText::from(label)
+        .into_galley(
+            ui,
+            Some(egui::TextWrapMode::Extend),
+            f32::INFINITY,
+            egui::TextStyle::Body,
+        )
+        .size()
+        .x;
+    let value_width = ui.spacing().interact_size.x + 2.0 * ui.spacing().button_padding.x;
+    let available =
+        ui.available_width() - label_width - value_width - 2.0 * ui.spacing().item_spacing.x;
+    // The fixed-width value editor and translated label must not push the panel
+    // past the width already used for its clipping and resize interaction.
+    let slider_width = available.clamp(40.0, ui.spacing().slider_width);
+    ui.scope(|ui| {
+        ui.spacing_mut().slider_width = slider_width;
+        ui.add(egui::Slider::new(timeout, 3.0..=12.0).text(label))
+    })
+    .inner
+}
+
 fn select_profiles(
     rows: &[Row],
     queue: &HashSet<i64>,
@@ -1670,6 +1753,122 @@ fn activity_spinner(ui: &mut egui::Ui) -> egui::Response {
 #[cfg(test)]
 mod ui_logic_tests {
     use super::*;
+
+    #[test]
+    fn dragging_settings_past_both_window_edges_keeps_the_layout_stable() {
+        for (language, screen_width) in Language::ALL
+            .into_iter()
+            .flat_map(|language| [850.0, 1160.0].map(|width| (language, width)))
+        {
+            let ctx = egui::Context::default();
+            i18n::install_fonts(&ctx);
+            let label = i18n::display(&rust_i18n::t!("Timeout, s", locale = language.code()));
+            let mut timeout = 8.0;
+            let mut time = 0.0;
+            let mut frame = |events| {
+                time += 1.0 / 60.0;
+                let mut rects = None;
+                let _ = ctx.run(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            egui::vec2(screen_width, 760.0),
+                        )),
+                        time: Some(time),
+                        events,
+                        ..Default::default()
+                    },
+                    |ctx| {
+                        let panel = settings_panel(ctx, |ui| {
+                            let clip = ui.clip_rect();
+                            egui::ScrollArea::vertical().show(ui, |ui| {
+                                egui::ComboBox::from_id_salt("language")
+                                    .width(ui.available_width())
+                                    .selected_text(language.name())
+                                    .truncate()
+                                    .show_ui(ui, |_| {});
+                                egui::ComboBox::from_id_salt("browser")
+                                    .width(ui.available_width())
+                                    .selected_text("Microsoft Edge")
+                                    .truncate()
+                                    .show_ui(ui, |_| {});
+                                timeout_slider(ui, &mut timeout, &label);
+                            });
+                            clip
+                        });
+                        let center = egui::CentralPanel::default().show(ctx, |_| {});
+                        rects = Some((panel.response.rect, panel.inner, center.response.rect));
+                    },
+                );
+                rects.unwrap()
+            };
+            for _ in 0..3 {
+                frame(vec![]);
+            }
+            let (panel, _, _) = frame(vec![]);
+            let edge = egui::pos2(panel.right(), 200.0);
+            frame(vec![egui::Event::PointerMoved(edge)]);
+            frame(vec![egui::Event::PointerButton {
+                pos: edge,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            }]);
+            let mut previous: Option<f32> = None;
+            for x in [160.0, 96.0, 40.0, 0.0, -300.0, -2000.0, 80.0, 160.0] {
+                let (panel, clip, center) =
+                    frame(vec![egui::Event::PointerMoved(egui::pos2(x, edge.y))]);
+                assert!(
+                    (panel.right() - clip.right()).abs() <= 1.0,
+                    "{}: panel {panel:?} disagrees with painted area {clip:?}",
+                    language.code()
+                );
+                if let Some(previous) = previous {
+                    assert!((panel.right() - previous).abs() <= 1.0);
+                }
+                assert!((center.left() - panel.right()).abs() <= 1.0);
+                previous = Some(panel.right());
+            }
+            let (expanded, clip, _) =
+                frame(vec![egui::Event::PointerMoved(egui::pos2(330.0, edge.y))]);
+            assert!(expanded.width() >= 329.0);
+            assert!((expanded.right() - clip.right()).abs() <= 1.0);
+            let (released, _, center) = frame(vec![egui::Event::PointerButton {
+                pos: egui::pos2(330.0, edge.y),
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            }]);
+            assert!((released.right() - expanded.right()).abs() <= 1.0);
+            assert!((center.left() - released.right()).abs() <= 1.0);
+            let edge = egui::pos2(released.right(), edge.y);
+            frame(vec![egui::Event::PointerMoved(edge)]);
+            frame(vec![egui::Event::PointerButton {
+                pos: edge,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            }]);
+            for x in [700.0, 1160.0, 3000.0, 700.0] {
+                let (panel, clip, center) =
+                    frame(vec![egui::Event::PointerMoved(egui::pos2(x, edge.y))]);
+                let limit = (screen_width * 0.45).min(SETTINGS_MAX_WIDTH);
+                assert!((panel.width() - limit).abs() <= 1.0);
+                assert!((panel.right() - clip.right()).abs() <= 1.0);
+                assert!((center.left() - panel.right()).abs() <= 1.0);
+            }
+            let (returned, _, _) =
+                frame(vec![egui::Event::PointerMoved(egui::pos2(300.0, edge.y))]);
+            assert!((returned.width() - 300.0).abs() <= 1.0);
+            let (released, _, _) = frame(vec![egui::Event::PointerButton {
+                pos: egui::pos2(300.0, edge.y),
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            }]);
+            assert!((released.width() - returned.width()).abs() <= 1.0);
+        }
+    }
 
     fn row(id: i64, verdict: AiVerdict) -> Row {
         let mut row = Row::new(Profile {
