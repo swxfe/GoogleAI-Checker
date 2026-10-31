@@ -299,7 +299,16 @@ fn release(root: &Path, target_dir: &Path, version: &str, target: &str) -> Resul
 }
 
 fn fetch(root: &Path, url: &str, destination: &Path, max_bytes: u64) -> Result<()> {
-    let status = Command::new(if cfg!(windows) { "curl.exe" } else { "curl" })
+    let mut command = Command::new(if cfg!(windows) { "curl.exe" } else { "curl" });
+    if url.starts_with("https://api.github.com/")
+        && let Ok(token) = std::env::var("GH_TOKEN")
+        && !token.is_empty()
+    {
+        command
+            .arg("--header")
+            .arg(format!("Authorization: Bearer {token}"));
+    }
+    let status = command
         .current_dir(root)
         .args([
             "--fail",
