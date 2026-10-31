@@ -1,18 +1,18 @@
 # Google AI Checker
 
-[English](README.md) · [Русский](README.ru.md) · [简体中文](README.zh-CN.md) · [فارسی](README.fa.md)
+[English](../README.md) · [Русский](README.ru.md) · [简体中文](README.zh-CN.md) · [فارسی](README.fa.md)
 
 بررسی کنید کدام پروفایل‌های Throne شما به Google AI Studio دسترسی دارند.
 
 تا ۱۰ بررسی هم‌زمان؛ در آزمایش محلی، **۵۲ پروفایل در حدود ۸ ثانیه** بررسی شد. زمان واقعی به پراکسی‌ها و شبکه بستگی دارد.
 
-![نمای Google AI Checker با پروفایل‌های نمایشی](assets/demo.png)
+![نمای Google AI Checker با پروفایل‌های نمایشی](../assets/demo.png)
 
 *پروفایل‌های تصویر نمایشی هستند و نتیجهٔ بررسی واقعی نیستند.*
 
 ## استفاده
 
-فایل ZIP را از [Releases](../../releases) بگیرید و کل پوشه را استخراج کنید. Throne در بسته موجود است.
+فایل ZIP را از [Releases](https://github.com/swxfe/GoogleAI-Checker/releases) بگیرید و کل پوشه را استخراج کنید. Throne در بسته موجود است.
 
 1. برنامه را باز کنید و پایگاه دادهٔ Throne خود را انتخاب کنید.
 2. مرورگر را انتخاب کنید و **ورود** را بزنید. پس از ورود به Google، روی **انجام شد** بزنید.
@@ -38,7 +38,7 @@
 cargo xtask dist
 ```
 
-فایل ZIP و چک‌سام در `target/dist/` ساخته می‌شوند. برای تغییر نسخهٔ Throne، فقط شمارهٔ نسخه را در [`throne-version.txt`](throne-version.txt) تغییر دهید. `xtask` آرشیو مناسب و SHA-256 آن را از GitHub می‌گیرد و دانلود و بسته‌بندی را انجام می‌دهد.
+فایل ZIP و چک‌سام در `target/dist/` ساخته می‌شوند. برای تغییر نسخهٔ Throne، فقط شمارهٔ نسخه را در [`throne-version.txt`](../throne-version.txt) تغییر دهید. `xtask` آرشیو مناسب و SHA-256 آن را از GitHub می‌گیرد و دانلود و بسته‌بندی را انجام می‌دهد.
 
 GitHub Actions برای ساخت چهار بسته و بارگذاری آن‌ها در GitHub Releases هنگام ارسال تگ `v*` تنظیم شده است. ترجمه‌ها در `locales/` هستند؛ کلیدهای همهٔ زبان‌ها همان متن انگلیسی در `en.json` هستند.
 

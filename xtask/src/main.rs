@@ -152,13 +152,15 @@ fn dist(options: Options) -> Result<()> {
     fs::copy(binary, bundle.join(exe))?;
     for doc in [
         "README.md",
-        "README.ru.md",
-        "README.zh-CN.md",
-        "README.fa.md",
+        "docs/README.ru.md",
+        "docs/README.zh-CN.md",
+        "docs/README.fa.md",
         "FONT-LICENSES.txt",
-        "throne-version.txt",
     ] {
-        if doc.starts_with("README") {
+        if let Some(parent) = bundle.join(doc).parent() {
+            fs::create_dir_all(parent)?;
+        }
+        if doc.ends_with(".md") {
             let text = fs::read_to_string(root.join(doc))?;
             fs::write(bundle.join(doc), bundle_readme(&text))?;
         } else {
@@ -198,7 +200,9 @@ fn bundle_readme(text: &str) -> String {
     let mut lines = text.lines().peekable();
     let mut output = Vec::new();
     while let Some(line) = lines.next() {
-        if line.starts_with("![") && line.ends_with("(assets/demo.png)") {
+        if line.starts_with("![")
+            && (line.ends_with("(assets/demo.png)") || line.ends_with("(../assets/demo.png)"))
+        {
             while lines.peek().is_some_and(|line| line.is_empty()) {
                 lines.next();
             }
@@ -215,7 +219,15 @@ fn bundle_readme(text: &str) -> String {
             output.push(line);
         }
     }
-    output.join("\n") + "\n"
+    (output.join("\n") + "\n")
+        .replace(
+            "](throne-version.txt)",
+            "](https://github.com/swxfe/GoogleAI-Checker/blob/main/throne-version.txt)",
+        )
+        .replace(
+            "](../throne-version.txt)",
+            "](https://github.com/swxfe/GoogleAI-Checker/blob/main/throne-version.txt)",
+        )
 }
 
 fn read_version(text: &str) -> Result<String> {

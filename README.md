@@ -1,6 +1,6 @@
 # Google AI Checker
 
-[English](README.md) · [Русский](README.ru.md) · [简体中文](README.zh-CN.md) · [فارسی](README.fa.md)
+[English](README.md) · [Русский](docs/README.ru.md) · [简体中文](docs/README.zh-CN.md) · [فارسی](docs/README.fa.md)
 
 Check which of your Throne profiles can access Google AI Studio.
 
@@ -12,7 +12,7 @@ Checks run up to 10 at a time: **52 profiles in about 8 seconds** in local tests
 
 ## Use
 
-Download a ZIP from [Releases](../../releases) and extract the whole folder. Throne is included.
+Download a ZIP from [Releases](https://github.com/swxfe/GoogleAI-Checker/releases) and extract the whole folder. Throne is included.
 
 1. Open the checker and select your Throne database.
 2. Choose a browser, click **Sign in**, then **Done** after signing in to Google.

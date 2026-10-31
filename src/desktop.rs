@@ -88,6 +88,7 @@ impl Desktop {
     fn initialize(&mut self, event_loop: &ActiveEventLoop) -> Result<()> {
         let builder = egui::ViewportBuilder::default()
             .with_title("Google AI Checker")
+            .with_icon(app_icon()?)
             .with_inner_size([1160.0, 760.0])
             .with_min_inner_size([850.0, 600.0])
             .with_transparent(false);
@@ -130,6 +131,16 @@ impl Desktop {
         self.state.take();
         event_loop.exit();
     }
+}
+
+fn app_icon() -> Result<egui::IconData> {
+    let image = image::load_from_memory(include_bytes!("../assets/icon.png"))?.into_rgba8();
+    let (width, height) = image.dimensions();
+    Ok(egui::IconData {
+        rgba: image.into_raw(),
+        width,
+        height,
+    })
 }
 
 impl ApplicationHandler<Repaint> for Desktop {

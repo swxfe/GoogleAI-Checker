@@ -1,18 +1,18 @@
 # Google AI Checker
 
-[English](README.md) · [Русский](README.ru.md) · [简体中文](README.zh-CN.md) · [فارسی](README.fa.md)
+[English](../README.md) · [Русский](README.ru.md) · [简体中文](README.zh-CN.md) · [فارسی](README.fa.md)
 
 检测你的 Throne 配置能否访问 Google AI Studio。
 
 最多同时检测 10 个配置。本地测试中，**52 个配置约 8 秒**；实际耗时取决于代理和网络。
 
-![Google AI Checker 演示配置](assets/demo.png)
+![Google AI Checker 演示配置](../assets/demo.png)
 
 *截图使用演示配置，并非实际检测结果。*
 
 ## 使用
 
-从 [Releases](../../releases) 下载 ZIP，并完整解压。压缩包已包含 Throne。
+从 [Releases](https://github.com/swxfe/GoogleAI-Checker/releases) 下载 ZIP，并完整解压。压缩包已包含 Throne。
 
 1. 打开检测器，选择你的 Throne 数据库。
 2. 选择浏览器，点击**登录**；登录 Google 后，点击**完成**。
@@ -38,7 +38,7 @@
 cargo xtask dist
 ```
 
-ZIP 和校验文件生成在 `target/dist/`。更新 Throne 时，只需修改 [`throne-version.txt`](throne-version.txt) 中的版本号。`xtask` 会找到对应的压缩包，从 GitHub 获取 SHA-256，并完成下载和打包。
+ZIP 和校验文件生成在 `target/dist/`。更新 Throne 时，只需修改 [`throne-version.txt`](../throne-version.txt) 中的版本号。`xtask` 会找到对应的压缩包，从 GitHub 获取 SHA-256，并完成下载和打包。
 
 GitHub Actions 已配置为在推送 `v*` 标签时构建四个发布包并上传至 GitHub Releases。翻译位于 `locales/`；所有语言均使用 `en.json` 中的英文原文作为键。
 

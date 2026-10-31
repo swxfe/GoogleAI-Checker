@@ -1,18 +1,18 @@
 # Google AI Checker
 
-[English](README.md) · [Русский](README.ru.md) · [简体中文](README.zh-CN.md) · [فارسی](README.fa.md)
+[English](../README.md) · [Русский](README.ru.md) · [简体中文](README.zh-CN.md) · [فارسی](README.fa.md)
 
 Проверяет, какие из ваших профилей Throne работают с Google AI Studio.
 
 До 10 проверок параллельно: **52 профиля примерно за 8 секунд** в локальных тестах. Скорость зависит от прокси и сети.
 
-![Google AI Checker с демонстрационными профилями](assets/demo.png)
+![Google AI Checker с демонстрационными профилями](../assets/demo.png)
 
 *На скриншоте вымышленные профили, а не результаты живой проверки.*
 
 ## Как пользоваться
 
-Скачайте ZIP из [Releases](../../releases) и распакуйте папку целиком. Throne уже внутри.
+Скачайте ZIP из [Releases](https://github.com/swxfe/GoogleAI-Checker/releases) и распакуйте папку целиком. Throne уже внутри.
 
 1. Откройте чекер и выберите вашу базу Throne.
 2. Выберите браузер, нажмите **Войти**, войдите в Google и нажмите **Готово**.
@@ -38,7 +38,7 @@
 cargo xtask dist
 ```
 
-ZIP и контрольная сумма появятся в `target/dist/`. Для смены Throne достаточно изменить одну версию в [`throne-version.txt`](throne-version.txt). `xtask` сам найдёт архив, получит SHA-256 с GitHub, скачает и упакует всё нужное.
+ZIP и контрольная сумма появятся в `target/dist/`. Для смены Throne достаточно изменить одну версию в [`throne-version.txt`](../throne-version.txt). `xtask` сам найдёт архив, получит SHA-256 с GitHub, скачает и упакует всё нужное.
 
 GitHub Actions настроен на сборку четырёх бандлов и загрузку в GitHub Releases по тегу `v*`. Переводы лежат в `locales/`: ключи для всех языков берутся из английского `en.json`.
 
