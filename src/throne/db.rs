@@ -15,6 +15,12 @@ use std::{
 pub struct ThroneDb {
     pub db_path: PathBuf,
 }
+pub struct DatabaseSnapshot {
+    pub profiles: Vec<Profile>,
+    pub groups: Vec<Group>,
+    pub fingerprints: HashMap<i64, String>,
+    pub connection: (Controller, String, bool),
+}
 pub struct SyncSummary {
     pub ok: usize,
     pub blocked: usize,
@@ -76,53 +82,111 @@ impl ThroneDb {
         }
         Ok(conn)
     }
+    #[cfg(test)]
     pub fn read_profiles(&self) -> Result<Vec<Profile>> {
         let c = self.open(false)?;
-        let mut q=c.prepare("SELECT p.id,p.name,p.type,p.gid,p.latency,p.latency_at,p.outbound_json,g.archive FROM profiles p JOIN groups g ON g.id=p.gid ORDER BY p.id")?;
-        let rows = q.query_map([], |r| {
-            Ok((
-                r.get::<_, i64>(0)?,
-                r.get::<_, String>(1)?,
-                r.get::<_, String>(2)?,
-                r.get::<_, i64>(3)?,
-                r.get::<_, i64>(4)?,
-                r.get::<_, i64>(5)?,
-                r.get::<_, String>(6)?,
-                r.get::<_, bool>(7)?,
-            ))
-        })?;
-        rows.map(|row| {
-            let (id, name, typ, gid, latency, at, outbound, archived) = row?;
-            let address = address(&serde_json::from_str(&outbound)?);
-            Ok(Profile {
+        Ok(Self::profiles_on(&c, false)?.0)
+    }
+    fn profiles_on(c: &Connection, hash: bool) -> Result<(Vec<Profile>, HashMap<i64, String>)> {
+        use sha2::{Digest, Sha256};
+        let mut q = c.prepare("SELECT p.id,p.name,p.type,p.gid,p.latency,p.latency_at,p.outbound_json,g.archive FROM profiles p JOIN groups g ON g.id=p.gid ORDER BY p.id")?;
+        let mut rows = q.query([])?;
+        let count: usize = c.query_row("SELECT count(*) FROM profiles", [], |row| row.get(0))?;
+        let mut profiles = Vec::with_capacity(count);
+        let mut fingerprints = HashMap::with_capacity(if hash { count } else { 0 });
+        let mut canonical = Vec::new();
+        while let Some(row) = rows.next()? {
+            let id = row.get(0)?;
+            let name: String = row.get(1)?;
+            let kind: String = row.get(2)?;
+            let group: i64 = row.get(3)?;
+            let value: serde_json::Value = serde_json::from_str(row.get_ref(6)?.as_str()?)?;
+            if hash {
+                canonical.clear();
+                serde_json::to_writer(&mut canonical, &(&name, &kind, group, &value))?;
+                fingerprints.insert(id, format!("{:x}", Sha256::digest(&canonical)));
+            }
+            profiles.push(Profile {
                 id,
                 name,
-                profile_type: typ,
-                address,
-                group: Some(gid),
-                latency_ms: Some(latency),
-                latency_at: Some(at),
-                disabled: Some(archived),
+                profile_type: kind,
+                address: address(&value),
+                group: Some(group),
+                latency_ms: Some(row.get(4)?),
+                latency_at: Some(row.get(5)?),
+                disabled: Some(row.get(7)?),
                 ..Default::default()
-            })
-        })
-        .collect()
+            });
+        }
+        Ok((profiles, fingerprints))
     }
+    pub fn snapshot(&self) -> Result<DatabaseSnapshot> {
+        let mut c = self.open(false)?;
+        // A sequential startup read needs little SQLite page cache. JSON is
+        // parsed one row at a time and never retained alongside the UI rows.
+        c.pragma_update(None, "cache_size", -128)?;
+        let tx = c.transaction()?;
+        let (profiles, fingerprints) = Self::profiles_on(&tx, true)?;
+        let mut counts = HashMap::<i64, u64>::new();
+        for profile in &profiles {
+            if let Some(group) = profile.group {
+                *counts.entry(group).or_default() += 1;
+            }
+        }
+        let mut groups = Self::group_rows_on(&tx)?;
+        for group in &mut groups {
+            group.profile_count = Some(counts.get(&group.id).copied().unwrap_or(0));
+        }
+        let snapshot = DatabaseSnapshot {
+            profiles,
+            fingerprints,
+            groups,
+            connection: Self::connection_on(&tx)?,
+        };
+        tx.commit()?;
+        Ok(snapshot)
+    }
+    #[cfg(test)]
     pub fn read_groups(&self) -> Result<Vec<Group>> {
         let c = self.open(false)?;
-        let mut q = c.prepare("SELECT g.id,g.name,g.archive,g.url,(SELECT count(*) FROM profiles p WHERE p.gid=g.id) FROM groups g LEFT JOIN groups_order o ON o.group_id=g.id ORDER BY o.display_order,g.id")?;
+        Self::groups_on(&c)
+    }
+    fn group_rows_on(c: &Connection) -> Result<Vec<Group>> {
+        let mut q = c.prepare("SELECT g.id,g.name,g.archive,g.url FROM groups g LEFT JOIN groups_order o ON o.group_id=g.id ORDER BY o.display_order,g.id")?;
+        Ok(q.query_map([], |r| {
+            Ok(Group {
+                id: r.get(0)?,
+                name: r.get(1)?,
+                archived: Some(r.get(2)?),
+                subscription: Some(
+                    r.get::<_, Option<String>>(3)?
+                        .is_some_and(|url| !url.is_empty()),
+                ),
+                profile_count: None,
+                updated_at: None,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?)
+    }
+    #[cfg(test)]
+    fn groups_on(c: &Connection) -> Result<Vec<Group>> {
+        let mut q = c.prepare("SELECT g.id,g.name,g.archive,g.url,COALESCE(n.total,0) FROM groups g LEFT JOIN groups_order o ON o.group_id=g.id LEFT JOIN (SELECT gid,count(*) AS total FROM profiles GROUP BY gid) n ON n.gid=g.id ORDER BY o.display_order,g.id")?;
         let rows = q.query_map([], |r| {
             Ok(Group {
                 id: r.get(0)?,
                 name: r.get(1)?,
                 archived: Some(r.get(2)?),
-                subscription: Some(!r.get::<_, String>(3)?.is_empty()),
+                subscription: Some(
+                    r.get::<_, Option<String>>(3)?
+                        .is_some_and(|url| !url.is_empty()),
+                ),
                 profile_count: Some(r.get(4)?),
                 updated_at: None,
             })
         })?;
         Ok(rows.collect::<Result<Vec<_>, _>>()?)
     }
+    #[cfg(test)]
     pub fn fingerprints(&self) -> Result<HashMap<i64, String>> {
         use sha2::{Digest, Sha256};
         let conn = self.open(false)?;
@@ -156,6 +220,9 @@ impl ThroneDb {
     }
     pub fn connection(&self) -> Result<(Controller, String, bool)> {
         let c = self.open(false)?;
+        Self::connection_on(&c)
+    }
+    fn connection_on(c: &Connection) -> Result<(Controller, String, bool)> {
         let setting = |name: &str, fallback: &str| -> String {
             c.query_row("SELECT value FROM settings WHERE key=?", [name], |r| {
                 r.get::<_, String>(0)
@@ -335,7 +402,10 @@ fn address(outbound: &serde_json::Value) -> String {
     }
 }
 fn native_config_json(raw: &str) -> Result<String> {
-    let mut config: serde_json::Value = serde_json::from_str(raw)?;
+    configuration_json(serde_json::from_str(raw)?)
+}
+
+pub(super) fn configuration_json(mut config: serde_json::Value) -> Result<String> {
     if config["type"] == "custom" {
         config = serde_json::from_str(
             config["config"]
@@ -348,7 +418,13 @@ fn native_config_json(raw: &str) -> Result<String> {
     }
     // Preserve the native Xray / sing-box structure, credentials and transport
     // exactly as stored; custom full configurations are already complete.
-    Ok(serde_json::to_string_pretty(&config)?)
+    // Match Qt's indented JSON export, including empty objects and Unicode.
+    let mut bytes = Vec::new();
+    let formatter = serde_json::ser::PrettyFormatter::with_indent(b"    ");
+    let mut serializer = serde_json::Serializer::with_formatter(&mut bytes, formatter);
+    serde::Serialize::serialize(&config, &mut serializer)?;
+    bytes.push(b'\n');
+    Ok(String::from_utf8(bytes)?)
 }
 fn clean_name(name: &str) -> &str {
     let mut name = name.trim();
@@ -366,6 +442,82 @@ fn clean_name(name: &str) -> &str {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    #[test]
+    fn startup_snapshot_matches_saved_fingerprints_and_sees_new_wal_rows() {
+        let (_dir, db) = fixture();
+        let writer = Connection::open(&db.db_path).unwrap();
+        writer
+            .execute_batch(
+                "PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0;
+            CREATE TABLE settings(key TEXT PRIMARY KEY,value TEXT);
+            INSERT INTO settings VALUES('remote_api_port','19095'),('inbound_socks_port','12080');",
+            )
+            .unwrap();
+        let snapshot = db.snapshot().unwrap();
+        assert_eq!(
+            serde_json::to_value(snapshot.profiles).unwrap(),
+            serde_json::to_value(db.read_profiles().unwrap()).unwrap()
+        );
+        assert_eq!(
+            serde_json::to_value(snapshot.groups).unwrap(),
+            serde_json::to_value(db.read_groups().unwrap()).unwrap()
+        );
+        assert_eq!(snapshot.fingerprints, db.fingerprints().unwrap());
+        assert_eq!(snapshot.connection.1, "127.0.0.1:12080");
+        writer.execute_batch("INSERT INTO profiles VALUES(4,'New','vless',5,0,0,'{\"server\":\"new.test\",\"server_port\":443}',0)").unwrap();
+        let snapshot = db.snapshot().unwrap();
+        assert_eq!(snapshot.profiles.len(), 4);
+        assert_eq!(snapshot.groups[0].profile_count, Some(4));
+        assert_eq!(snapshot.fingerprints, db.fingerprints().unwrap());
+    }
+
+    #[test]
+    #[ignore = "Read-only startup benchmark; optional CHECKER_BENCH_DB, CHECKER_BENCH_MODE=split/snapshot"]
+    fn startup_database_benchmark() {
+        let (_dir, fixture) = fixture();
+        let db = if let Some(path) = std::env::var_os("CHECKER_BENCH_DB") {
+            ThroneDb::new(path.into())
+        } else {
+            let mut c = Connection::open(&fixture.db_path).unwrap();
+            let tx = c.transaction().unwrap();
+            let full = serde_json::json!({"type":"custom","subtype":"xrayfullconfig","config":include_str!("../../tests/fixtures/custom-xray-full.json")}).to_string();
+            for id in 4..=3000 {
+                tx.execute(
+                    "INSERT INTO profiles VALUES(?,'Fixture','custom',5,0,0,?,0)",
+                    params![id, full],
+                )
+                .unwrap();
+            }
+            tx.commit().unwrap();
+            fixture
+        };
+        let mode = std::env::var("CHECKER_BENCH_MODE").unwrap_or_else(|_| "snapshot".into());
+        let mut times = Vec::new();
+        let mut count = 0;
+        for _ in 0..25 {
+            let start = std::time::Instant::now();
+            if mode == "split" {
+                let data = (
+                    db.read_profiles().unwrap(),
+                    db.read_groups().unwrap(),
+                    db.connection().unwrap(),
+                    db.fingerprints().unwrap(),
+                );
+                count = data.0.len();
+                std::hint::black_box(data);
+            } else {
+                let data = db.snapshot().unwrap();
+                count = data.profiles.len();
+                std::hint::black_box(data);
+            }
+            times.push(start.elapsed().as_secs_f64() * 1000.0);
+        }
+        times.sort_by(f64::total_cmp);
+        println!(
+            "Database startup mode={mode}, profiles={count}, median_ms={:.2}, max_ms={:.2}",
+            times[12], times[24]
+        );
+    }
     pub(crate) fn fixture() -> (tempfile::TempDir, ThroneDb) {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("Throne.db");
@@ -429,6 +581,55 @@ pub(crate) mod tests {
             serde_json::from_str::<serde_json::Value>(&db.native_config(1).unwrap()).unwrap()["uuid"],
             "secret"
         );
+    }
+    #[test]
+    fn copy_full_custom_preserves_every_field_from_a_throne_share_link() {
+        use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+        let full: serde_json::Value =
+            serde_json::from_str(include_str!("../../tests/fixtures/custom-xray-full.json"))
+                .unwrap();
+        let custom = serde_json::json!({"type":"custom","subtype":"xrayfullconfig","name":"fixture","config":full.to_string()});
+        let link = format!(
+            "throne://add/{}",
+            URL_SAFE_NO_PAD.encode(custom.to_string())
+        );
+        let decoded = URL_SAFE_NO_PAD
+            .decode(link.strip_prefix("throne://add/").unwrap())
+            .unwrap();
+        let (_dir, db) = fixture();
+        db.open(true)
+            .unwrap()
+            .execute(
+                "UPDATE profiles SET type='custom',outbound_json=? WHERE id=1",
+                [String::from_utf8(decoded).unwrap()],
+            )
+            .unwrap();
+        let copied = db.native_config(1).unwrap();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&copied).unwrap(),
+            full
+        );
+        assert!(copied.starts_with("{\n    \"dns\": {\n        \"queryStrategy\""));
+        assert!(copied.contains("🇦🇪 ОАЭ"));
+        assert!(!copied.contains("throne://"));
+        assert!(!copied.contains("xrayfullconfig"));
+        for subtype in ["outbound", "fullconfig", "xrayoutbound", "xrayfullconfig"] {
+            let wrapper =
+                serde_json::json!({"type":"custom","subtype":subtype,"config":full.to_string()});
+            assert_eq!(
+                serde_json::from_str::<serde_json::Value>(&configuration_json(wrapper).unwrap())
+                    .unwrap(),
+                full
+            );
+        }
+        for invalid in [
+            serde_json::json!({"type":"custom"}),
+            serde_json::json!({"type":"custom","config":"[]"}),
+            serde_json::json!({"type":"custom","config":"broken"}),
+            serde_json::json!(null),
+        ] {
+            assert!(configuration_json(invalid).is_err());
+        }
     }
     #[test]
     fn direct_reads_include_new_groups_and_live_wal_profiles() {

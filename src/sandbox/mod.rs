@@ -551,6 +551,7 @@ fn prepare_database_settings(database: &Path) -> Result<String> {
         ("core_box_clash_api", "-19090"),
         ("core_box_api_port", "-19091"),
         ("core_dns_in_port", "12053"),
+        ("core_dns_in_lan", "false"),
         ("enable_ntp", "false"),
         ("language", "1"),
         ("allow_beta_update", "false"),
@@ -707,6 +708,127 @@ mod tests {
         let controller = manager.controller().unwrap();
         let profiles = controller.profiles(None).await.unwrap();
         assert_eq!(profiles.len(), 200);
+        // Read the configuration through the actual release's encrypted API,
+        // then compare it with the same profile read directly from SQLite.
+        let database = ThroneDb::new(paths.database.clone());
+        let api = controller.config(profiles[0].id).await.unwrap();
+        assert_eq!(
+            api.outbound,
+            serde_json::from_str::<serde_json::Value>(
+                &database.native_config(profiles[0].id).unwrap()
+            )
+            .unwrap()
+        );
+        let link = api.clipboard_text().unwrap();
+        assert!(link.starts_with("vless://"));
+        assert_eq!(link, api.link);
+        assert_eq!(manager.import(&link).await.unwrap(), 1);
+        // Link generation belongs to Throne for every protocol, not the checker.
+        for mut outbound in [
+            serde_json::json!({"type":"socks","server":"127.0.0.1","server_port":9}),
+            serde_json::json!({"type":"http","server":"127.0.0.1","server_port":9}),
+            serde_json::json!({"type":"shadowsocks","server":"127.0.0.1","server_port":9,"method":"aes-128-gcm","password":"fixture"}),
+            serde_json::json!({"type":"trojan","server":"127.0.0.1","server_port":9,"password":"fixture","tls":{"enabled":true,"server_name":"localhost"}}),
+            serde_json::json!({"type":"vmess","server":"127.0.0.1","server_port":9,"uuid":"00000000-0000-4000-8000-000000000001","security":"auto"}),
+        ] {
+            let name = format!("Copy fixture {}", outbound["type"].as_str().unwrap());
+            outbound["tag"] = serde_json::json!(name);
+            let share = format!(
+                "throne://add/{}",
+                URL_SAFE_NO_PAD.encode(outbound.to_string())
+            );
+            assert_eq!(manager.import(&share).await.unwrap(), 1);
+            let id = controller
+                .profiles(None)
+                .await
+                .unwrap()
+                .into_iter()
+                .find(|profile| profile.name == name)
+                .unwrap()
+                .id;
+            let config = controller.config(id).await.unwrap();
+            assert!(!config.link.is_empty(), "No official link for {name}");
+            assert_eq!(config.clipboard_text().unwrap(), config.link);
+            // HTTP proxy links must be imported explicitly as profiles: the
+            // subscription importer treats a bare HTTP URL as a download.
+            let Controller::Wire { addr, key } = &controller;
+            let mut client =
+                crate::throne::client::ThroneClient::connect(addr, key, Duration::from_secs(3))
+                    .await
+                    .unwrap();
+            let response = client.call(&crate::throne::models::WireRequest {
+                method: "POST".into(), path: "/v1/import".into(), query: None,
+                body: Some(serde_json::json!({"as":"profiles","text":config.link,"wait":true,"timeout":5})),
+            }, Duration::from_secs(8)).await.unwrap();
+            assert_eq!(response.status, 200, "Link round-trip failed for {name}");
+            assert_eq!(response.body.unwrap()["imported"], 1);
+        }
+        assert!(controller.config(i64::from(i32::MAX)).await.is_err());
+        let full: serde_json::Value =
+            serde_json::from_str(include_str!("../../tests/fixtures/custom-xray-full.json"))
+                .unwrap();
+        let custom = serde_json::json!({"type":"custom","subtype":"xrayfullconfig","name":"Custom export fixture","config":full.to_string()});
+        let share = format!(
+            "throne://add/{}",
+            URL_SAFE_NO_PAD.encode(custom.to_string())
+        );
+        assert_eq!(manager.import(&share).await.unwrap(), 1);
+        let custom_id = controller
+            .profiles(None)
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|p| p.profile_type == "custom")
+            .unwrap()
+            .id;
+        let copied = controller
+            .config(custom_id)
+            .await
+            .unwrap()
+            .clipboard_text()
+            .unwrap();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&copied).unwrap(),
+            full
+        );
+        assert_eq!(copied, database.native_config(custom_id).unwrap());
+        let sing_outbound =
+            serde_json::json!({"type":"socks","server":"127.0.0.1","server_port":9});
+        let xray_outbound = serde_json::json!({"protocol":"socks","settings":{"servers":[{"address":"127.0.0.1","port":9}]}});
+        for (subtype, inner) in [
+            ("outbound", sing_outbound.clone()),
+            (
+                "fullconfig",
+                serde_json::json!({"outbounds":[sing_outbound],"route":{"final":"proxy"}}),
+            ),
+            ("xrayoutbound", xray_outbound),
+        ] {
+            let name = format!("Custom copy fixture {subtype}");
+            let wrapper = serde_json::json!({"type":"custom","name":name,"subtype":subtype,"config":inner.to_string()});
+            let share = format!(
+                "throne://add/{}",
+                URL_SAFE_NO_PAD.encode(wrapper.to_string())
+            );
+            assert_eq!(manager.import(&share).await.unwrap(), 1);
+            let id = controller
+                .profiles(None)
+                .await
+                .unwrap()
+                .into_iter()
+                .find(|profile| profile.name == name)
+                .unwrap()
+                .id;
+            let copied = controller
+                .config(id)
+                .await
+                .unwrap()
+                .clipboard_text()
+                .unwrap();
+            assert_eq!(
+                serde_json::from_str::<serde_json::Value>(&copied).unwrap(),
+                inner
+            );
+        }
         #[cfg(windows)]
         {
             use windows_sys::Win32::{
@@ -860,7 +982,7 @@ mod tests {
             .backup(rusqlite::DatabaseName::Main, &direct_db, None)
             .unwrap();
         // An external desktop installation can have an older binary. Always
-        // run our provisioned beta.3 binary against the selected data directory.
+        // Run our provisioned binary against the selected data directory.
         fs::write(
             external.path().join(if cfg!(windows) {
                 "Throne.exe"

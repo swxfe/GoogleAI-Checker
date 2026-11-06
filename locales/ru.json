@@ -45,7 +45,7 @@
   "Active": "Активна",
   "Ready": "Готова",
   "Copy": "Копировать",
-  "Copy the original configuration JSON": "Копировать исходный JSON",
+  "Copy link, or JSON for custom profiles": "Копировать ссылку; для custom — JSON",
   "Recheck this node only": "Перепроверить эту ноду",
   "Pending": "Ожидает",
   "Checking…": "Проверка...",
@@ -77,7 +77,7 @@
   "Loading…": "Загрузка…",
   "Scanning…": "Проверка…",
   "Opening browser…": "Открываем браузер…",
-  "Original JSON copied": "Исходный JSON скопирован",
+  "Profile copied": "Профиль скопирован",
   "Sign in using the browser, then click Done": "Войдите в браузере, затем нажмите «Готово».",
   "Sign in to Google before starting a scan": "Сначала войдите в Google через кнопку «Войти в Google»",
   "Select an installed browser": "Выберите установленный браузер",
@@ -191,5 +191,6 @@
   "Nodes: %{a0}   Available: %{a1}   AI unavailable: %{a2}": "Нод: %{a0}   Доступны: %{a1}   AI недоступен: %{a2}",
   "Confirmation request: %{result}; first response: %{first}": "Повторный запрос: %{result}; первый ответ: %{first}",
   "Throne is missing from ./bin/. Extract the complete release bundle.": "Throne отсутствует в ./bin/. Распакуйте полный архив релиза.",
-  "Select a Throne database or import a subscription to get started": "Выберите базу Throne или импортируйте подписку"
+  "Select a Throne database or import a subscription to get started": "Выберите базу Throne или импортируйте подписку",
+  "Profiles loaded. Connecting to Throne…": "Профили загружены. Подключение к Throne…"
 }

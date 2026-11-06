@@ -45,7 +45,7 @@
   "Active": "Active",
   "Ready": "Ready",
   "Copy": "Copy",
-  "Copy the original configuration JSON": "Copy the original configuration JSON",
+  "Copy link, or JSON for custom profiles": "Copy link, or JSON for custom profiles",
   "Recheck this node only": "Recheck this node only",
   "Pending": "Pending",
   "Checking…": "Checking…",
@@ -77,7 +77,7 @@
   "Loading…": "Loading…",
   "Scanning…": "Scanning…",
   "Opening browser…": "Opening browser…",
-  "Original JSON copied": "Original JSON copied",
+  "Profile copied": "Profile copied",
   "Sign in using the browser, then click Done": "Sign in using the browser, then click Done",
   "Sign in to Google before starting a scan": "Sign in to Google before starting a scan",
   "Select an installed browser": "Select an installed browser",
@@ -191,5 +191,6 @@
   "Nodes: %{a0}   Available: %{a1}   AI unavailable: %{a2}": "Nodes: %{a0}   Available: %{a1}   AI unavailable: %{a2}",
   "Confirmation request: %{result}; first response: %{first}": "Confirmation request: %{result}; first response: %{first}",
   "Throne is missing from ./bin/. Extract the complete release bundle.": "Throne is missing from ./bin/. Extract the complete release bundle.",
-  "Select a Throne database or import a subscription to get started": "Select a Throne database or import a subscription to get started"
+  "Select a Throne database or import a subscription to get started": "Select a Throne database or import a subscription to get started",
+  "Profiles loaded. Connecting to Throne…": "Profiles loaded. Connecting to Throne…"
 }

@@ -91,47 +91,28 @@ pub fn account_profile(root: &Path, path: &Path) -> Result<PathBuf> {
     );
     Ok(root.join("google_account").join(&hash[..12]))
 }
+// Capture the request, not the response: preparing credentials does not require
+// waiting for Google's model list or copying the rendered page into Rust.
 const OBSERVER: &str = r#"(() => {
- const s = window.__aiCheck = {rpcOk:false, denied:false, authLost:false, rpcMs:null, rpcSeen:false, rpcStatus:null, rpcRejected:false};
- const inspect = (url, status, body, ms) => {
-   if (!/listmodels/i.test(url)) return;
-   s.rpcSeen=true; s.rpcStatus=status;
-   if (status===401) {s.authLost=true; return;}
-   if (/user location is not supported|region not supported|available-regions|not available in your country|isn't supported in your country/i.test(body)) s.denied=true;
-   if (status===403 || /permission.denied/i.test(body)) s.rpcRejected=true;
+ window.__aiRequest = null;
+ const fetch0 = window.fetch;
+ window.fetch = function(...args) {
    try {
-     const json=JSON.parse(body.replace(/^\)\]\}'\s*/, ''));
-     // AI Studio also uses protobuf's positional JSON encoding for model lists.
-     const named=Array.isArray(json?.models) && json.models.some(m=>typeof m?.name==='string' && m.name.length>0);
-     const positional=Array.isArray(json?.[0]) && json[0].some(m=>Array.isArray(m) && typeof m[0]==='string' && m[0].length>0);
-     if (status>=200 && status<300 && !s.denied && !json?.error && (named || positional)) {
-       s.rpcOk=true; s.rpcMs=Math.round(ms);
-     }
-   } catch (_) {}
- };
- const fetch0=window.fetch;
- window.fetch=async function(...args) {
-   try {
-     const raw=typeof args[0]==='string'?args[0]:args[0]?.url || String(args[0] || '');
+     const raw = typeof args[0] === 'string' ? args[0] : args[0]?.url || String(args[0] || '');
      if (/listmodels/i.test(raw)) {
-       const request=new Request(args[0] instanceof Request?args[0].clone():args[0],args[1]);
-       const captured={url:request.url,method:request.method,headers:Object.fromEntries(request.headers),body:''};
-       request.clone().text().then(body=>{captured.body=body;window.__aiRequest=captured}).catch(()=>{});
+       const request = new Request(args[0] instanceof Request ? args[0].clone() : args[0], args[1]);
+       const captured = {url:request.url, method:request.method, headers:Object.fromEntries(request.headers), body:''};
+       request.text().then(body => {captured.body = body; window.__aiRequest = captured}).catch(() => {});
      }
    } catch (_) {}
-   const start=performance.now(), r=await fetch0.apply(this,args);
-   const u=typeof args[0]==='string'?args[0]:args[0]?.url || String(args[0] || '');
-   if (/listmodels/i.test(u)) r.clone().text().then(b=>inspect(u,r.status,b,performance.now()-start)).catch(()=>{});
-   return r;
+   return fetch0.apply(this, args);
  };
- const open0=XMLHttpRequest.prototype.open, send0=XMLHttpRequest.prototype.send;
- const header0=XMLHttpRequest.prototype.setRequestHeader;
- XMLHttpRequest.prototype.open=function(method,url,...rest) {this.__aiUrl=String(url);this.__aiMethod=method;this.__aiHeaders={};return open0.call(this,method,url,...rest)};
- XMLHttpRequest.prototype.setRequestHeader=function(name,value) {this.__aiHeaders[name]=this.__aiHeaders[name]?this.__aiHeaders[name]+', '+value:String(value);return header0.call(this,name,value)};
- XMLHttpRequest.prototype.send=function(...args) {
+ const open0 = XMLHttpRequest.prototype.open, send0 = XMLHttpRequest.prototype.send;
+ const header0 = XMLHttpRequest.prototype.setRequestHeader;
+ XMLHttpRequest.prototype.open = function(method, url, ...rest) {this.__aiUrl=String(url);this.__aiMethod=method;this.__aiHeaders={};return open0.call(this,method,url,...rest)};
+ XMLHttpRequest.prototype.setRequestHeader = function(name,value) {this.__aiHeaders[name]=this.__aiHeaders[name]?this.__aiHeaders[name]+', '+value:String(value);return header0.call(this,name,value)};
+ XMLHttpRequest.prototype.send = function(...args) {
    if (/listmodels/i.test(this.__aiUrl) && (args[0]==null || typeof args[0]==='string')) window.__aiRequest={url:new URL(this.__aiUrl,location.href).href,method:this.__aiMethod,headers:this.__aiHeaders,body:args[0]||''};
-   const start=performance.now();
-   this.addEventListener('load',()=>{try {inspect(this.__aiUrl,this.status,typeof this.response==='string'?this.response:JSON.stringify(this.response),performance.now()-start)}catch(_){}});
    return send0.apply(this,args);
  };
 })()"#;
@@ -146,11 +127,7 @@ pub struct Evidence {
     #[serde(default)]
     pub auth_lost: bool,
     #[serde(default)]
-    pub rpc_seen: bool,
-    #[serde(default)]
     pub net_error: String,
-    #[serde(default)]
-    pub(super) request: Option<super::rpc::ModelRequest>,
 }
 
 pub fn classify(e: &Evidence) -> AiVerdict {
@@ -349,6 +326,7 @@ impl BrowserRunner {
             .await?;
         Ok(serde_json::from_value(result["cookies"].take())?)
     }
+    #[cfg(test)]
     pub async fn has_login(&self) -> Result<bool> {
         Ok(has_google_login(&self.cookies().await?))
     }
@@ -414,22 +392,16 @@ impl BrowserRunner {
             "Browser navigation failed"
         );
         while Instant::now() < deadline {
-            let response = page.evaluate(r#"(() => {
-                const s=window.__aiCheck || {};
-                return {...s,url:location.href,text:(document.body?.innerText||'').slice(0,100000),request:window.__aiRequest||null};
-            })()"#).await;
+            let response = page.evaluate("window.__aiRequest || null").await;
             match response {
-                Ok(value) => {
-                    let evidence: Evidence = serde_json::from_value(value)?;
-                    if let Some(request) =
-                        evidence.request.filter(super::rpc::ModelRequest::validate)
-                    {
+                Ok(value) if !value.is_null() => {
+                    let request: super::rpc::ModelRequest = serde_json::from_value(value)?;
+                    if request.validate() {
                         self.model_request = Some(request);
-                    }
-                    if self.model_request.is_some() && evidence.rpc_seen {
                         break;
                     }
                 }
+                Ok(_) => {}
                 Err(error) if transient_context_error(&error.to_string()) => {}
                 Err(error) => return Err(error),
             }
@@ -515,6 +487,7 @@ mod tests {
                         "text/html",
                     )
                 } else if url.ends_with("/ListModels") {
+                    tokio::time::sleep(Duration::from_secs(2)).await;
                     (
                         r#"{"models":[{"name":"offline-fixture-model"}]}"#,
                         "application/json",
@@ -527,6 +500,7 @@ mod tests {
                     "body":base64::engine::general_purpose::STANDARD.encode(body)})).await.is_err() { break; }
             }
         });
+        let captured_at = Instant::now();
         runner
             .learn_on_page(
                 &page,
@@ -535,6 +509,11 @@ mod tests {
             )
             .await
             .unwrap();
+        println!("Session request capture: {:?}", captured_at.elapsed());
+        assert!(
+            captured_at.elapsed() < Duration::from_secs(1),
+            "Preparing the session must not wait for the delayed model response"
+        );
         let session = runner.export_http_session().await.unwrap();
         assert!(session.request.validate());
         assert_eq!(session.request.body, "[]");

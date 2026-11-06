@@ -95,7 +95,7 @@ pub async fn run(
             let mut probe =
                 BrowserRunner::launch_authenticated(&config.browser, &config.proxy, &config.root)
                     .await?;
-            let logged_in = probe.has_login().await?;
+            let logged_in = probe.session_available();
             if logged_in {
                 let _ = events.send(LoginEvent::Notice(
                     "Preparing AI Studio HTTP session…".into(),

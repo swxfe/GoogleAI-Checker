@@ -1,5 +1,5 @@
-//! Throne beta.3 core IPC: little-endian frames containing proto2 messages.
-//! Schema: throneproj/Throne@0108602/core/gen/libcore.proto (LoadConfigReq/ErrorResp).
+//! Throne 1.4.0 core IPC: little-endian frames containing proto2 messages.
+//! Schema: throneproj/Throne@99f7ecd/core/gen/libcore.proto (LoadConfigReq/ErrorResp).
 use anyhow::{Context, Result, bail, ensure};
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};

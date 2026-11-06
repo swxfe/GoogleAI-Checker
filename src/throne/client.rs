@@ -1,6 +1,6 @@
-use crate::throne::models::{
-    Group, GroupsResponse, Profile, ProfilesResponse, Status, WireRequest, WireResponse,
-};
+#[cfg(test)]
+use super::models::{Group, GroupsResponse, Profile, ProfilesResponse};
+use crate::throne::models::{ProfileConfig, Status, WireRequest, WireResponse};
 use anyhow::{Context, Result, anyhow};
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use chacha20poly1305::{
@@ -10,6 +10,7 @@ use chacha20poly1305::{
 use hmac::{Hmac, Mac};
 use rand::RngCore;
 use sha2::Sha256;
+#[cfg(test)]
 use std::collections::HashMap;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -184,6 +185,7 @@ impl ThroneClient {
         ))
     }
 
+    #[cfg(test)]
     pub async fn get_groups(&mut self) -> Result<Vec<Group>> {
         let req = WireRequest {
             method: "GET".to_string(),
@@ -204,6 +206,7 @@ impl ThroneClient {
         ))
     }
 
+    #[cfg(test)]
     pub async fn get_profiles(&mut self, group_id: Option<i64>) -> Result<Vec<Profile>> {
         let mut query = HashMap::new();
         if let Some(gid) = group_id {
@@ -230,6 +233,31 @@ impl ThroneClient {
         ))
     }
 
+    pub async fn get_config(&mut self, profile_id: i64) -> Result<ProfileConfig> {
+        let request = WireRequest {
+            method: "GET".into(),
+            path: format!("/v1/profiles/{profile_id}/config"),
+            query: None,
+            body: None,
+        };
+        let response = self.call(&request, Duration::from_secs(5)).await?;
+        if response.status == 200 {
+            let body: ProfileConfig =
+                serde_json::from_value(response.body.context("Нет конфигурации профиля Throne")?)?;
+            anyhow::ensure!(body.id == profile_id, "Throne вернул другой профиль");
+            return Ok(body);
+        }
+        // Error messages from configuration endpoints may contain credentials.
+        Err(anyhow!(
+            "Не удалось прочитать конфигурацию Throne: HTTP {}, код {}",
+            response.status,
+            response
+                .error
+                .map(|e| e.code)
+                .unwrap_or_else(|| "unknown".into())
+        ))
+    }
+
     pub async fn import(&mut self, input: &str) -> Result<usize> {
         let input = input.trim();
         if input.is_empty() {
@@ -246,7 +274,7 @@ impl ThroneClient {
             query: None,
             body: Some(body),
         };
-        // beta.3 limits management import payloads to 900 KiB. A URL import is
+        // Throne 1.4.0 limits management import payloads to 900 KiB. A URL import is
         // fetched once by Throne and does not put the subscription in a wire frame.
         if serde_json::to_vec(&request)?.len() > 900 * 1024 {
             anyhow::bail!("Текст импорта превышает 900 КиБ; используйте URL подписки");

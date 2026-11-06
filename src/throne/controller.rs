@@ -1,6 +1,8 @@
+#[cfg(test)]
+use super::models::{Group, Profile};
 use super::{
     client::{ConnectionRejected, ThroneClient},
-    models::{Group, Profile, Status},
+    models::{ProfileConfig, Status},
 };
 use anyhow::{Result, bail};
 use std::time::Duration;
@@ -40,14 +42,19 @@ impl Controller {
     pub async fn status(&self) -> Result<Status> {
         self.wire().await?.get_status().await
     }
+    #[cfg(test)]
     pub async fn groups(&self) -> Result<Vec<Group>> {
         self.wire().await?.get_groups().await
     }
+    #[cfg(test)]
     pub async fn profiles(&self, group: Option<i64>) -> Result<Vec<Profile>> {
         self.wire().await?.get_profiles(group).await
     }
     pub async fn import(&self, input: &str) -> Result<usize> {
         self.wire().await?.import(input).await
+    }
+    pub async fn config(&self, id: i64) -> Result<ProfileConfig> {
+        self.wire().await?.get_config(id).await
     }
     pub fn session(&self) -> ControllerSession {
         ControllerSession {

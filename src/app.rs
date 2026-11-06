@@ -32,11 +32,13 @@ use std::{
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 
 enum UiEvent {
-    Data {
+    Profiles {
         profiles: Vec<Profile>,
         groups: Vec<Group>,
         fingerprints: HashMap<i64, String>,
         source: String,
+    },
+    Ready {
         status: Box<Status>,
         controller: Controller,
         proxy: String,
@@ -194,7 +196,13 @@ impl CheckerApp {
                     .as_ref()
                     .and_then(|s| login::saved_browser(&s.paths.browser))
             })
-            .or_else(BrowserDetector::find_best);
+            .or_else(|| {
+                detected_browsers
+                    .iter()
+                    .find(|b| b.is_default_candidate)
+                    .or_else(|| detected_browsers.first())
+                    .map(|b| b.path.clone())
+            });
         let login_ready = selected_browser.as_ref().is_some_and(|browser| {
             sandbox
                 .as_ref()
@@ -269,40 +277,40 @@ impl CheckerApp {
         }
         self.sandbox.clone()
     }
-    async fn read_data(manager: Arc<Sandbox>, mut notice: String) -> anyhow::Result<UiEvent> {
+    async fn read_data(
+        manager: Arc<Sandbox>,
+        mut notice: String,
+        events: &EventSender<UiEvent>,
+    ) -> anyhow::Result<UiEvent> {
         if let Some(path) = manager.direct_database() {
             let db = ThroneDb::new(path.clone());
             let reader = db.clone();
             let source = dunce::canonicalize(&path)?.to_string_lossy().into_owned();
-            let (profiles, groups, (existing, _, enabled), fingerprints) =
-                tokio::task::spawn_blocking(move || {
-                    Ok::<_, anyhow::Error>((
-                        reader.read_profiles()?,
-                        reader.read_groups()?,
-                        reader.connection()?,
-                        reader.fingerprints()?,
-                    ))
-                })
-                .await??;
+            let snapshot = tokio::task::spawn_blocking(move || reader.snapshot()).await??;
+            let (existing, proxy, enabled) = snapshot.connection;
+            let count = snapshot.profiles.len();
+            let _ = events.send(UiEvent::Profiles {
+                profiles: snapshot.profiles,
+                groups: snapshot.groups,
+                fingerprints: snapshot.fingerprints,
+                source,
+            });
             let already_ready = if enabled {
                 existing.status().await.ok()
             } else {
                 None
             };
-            let (controller, status) = if let Some(status) = already_ready {
-                (existing, status)
+            let (controller, status, proxy) = if let Some(status) = already_ready {
+                (existing, status, proxy)
             } else {
                 let controller = manager.start().await?;
                 let status = controller.status().await?;
-                (controller, status)
+                (controller, status, PROXY_ADDR.into())
             };
-            let (_, proxy, _) = tokio::task::spawn_blocking(move || db.connection()).await??;
-            notice = rust_i18n::t!("Loaded: %{a0} nodes", a0 = profiles.len()).to_string();
-            return Ok(UiEvent::Data {
-                profiles,
-                groups,
-                fingerprints,
-                source,
+            if notice.is_empty() {
+                notice = rust_i18n::t!("Loaded: %{a0} nodes", a0 = count).to_string();
+            }
+            return Ok(UiEvent::Ready {
                 status: Box::new(status),
                 controller,
                 proxy,
@@ -312,18 +320,19 @@ impl CheckerApp {
         }
         let controller = manager.start().await?;
         let status = controller.status().await?;
-        let (groups, profiles) = tokio::try_join!(controller.groups(), controller.profiles(None))?;
         let database = manager.paths.database.clone();
         let source = dunce::canonicalize(&database)?
             .to_string_lossy()
             .into_owned();
-        let fingerprints =
-            tokio::task::spawn_blocking(move || ThroneDb::new(database).fingerprints()).await??;
-        Ok(UiEvent::Data {
-            profiles,
-            groups,
-            fingerprints,
+        let snapshot =
+            tokio::task::spawn_blocking(move || ThroneDb::new(database).snapshot()).await??;
+        let _ = events.send(UiEvent::Profiles {
+            profiles: snapshot.profiles,
+            groups: snapshot.groups,
+            fingerprints: snapshot.fingerprints,
             source,
+        });
+        Ok(UiEvent::Ready {
             status: Box::new(status),
             controller,
             proxy: PROXY_ADDR.into(),
@@ -339,7 +348,7 @@ impl CheckerApp {
         self.busy = true;
         self.message = "Loading…".into();
         self.runtime.spawn(async move {
-            let r = Self::read_data(manager, String::new()).await;
+            let r = Self::read_data(manager, String::new(), &tx).await;
             let _ = tx.send(r.unwrap_or_else(|e| {
                 UiEvent::Error(rust_i18n::t!("Throne: %{e}", e = format!("{:#}", e)).to_string())
             }));
@@ -364,6 +373,7 @@ impl CheckerApp {
                 Self::read_data(
                     manager,
                     rust_i18n::t!("Imported %{count} nodes", count = count).to_string(),
+                    &tx,
                 )
                 .await
             }
@@ -626,10 +636,23 @@ impl CheckerApp {
         self.copying = true;
         self.message = "Reading configuration…".into();
         let tx = self.tx.clone();
-        self.runtime.spawn_blocking(move || {
-            let result = ThroneDb::new(database)
-                .native_config(id)
-                .map_err(|e| rust_i18n::t!("Copy: %{e}", e = format!("{:#}", e)).to_string());
+        self.runtime.spawn(async move {
+            let result = async {
+                let db = ThroneDb::new(database);
+                let source = db.clone();
+                let connection = tokio::task::spawn_blocking(move || source.connection()).await?;
+                // Resolve the API from the selected database, not a different
+                // sandbox whose profile IDs can happen to be the same.
+                if let Ok((controller, _, true)) = connection
+                    && let Ok(config) = controller.config(id).await
+                {
+                    return config.clipboard_text();
+                }
+                // Copy still works with Throne stopped or its API disabled.
+                tokio::task::spawn_blocking(move || db.native_config(id)).await?
+            }
+            .await
+            .map_err(|e| rust_i18n::t!("Copy: %{e}", e = format!("{:#}", e)).to_string());
             let _ = tx.send(UiEvent::Copied(result));
         });
     }
@@ -655,7 +678,7 @@ impl CheckerApp {
                     a3 = s.backup.display()
                 )
                 .to_string();
-                Self::read_data(manager, notice).await
+                Self::read_data(manager, notice, &tx).await
             }
             .await;
             let _ = tx.send(result.unwrap_or_else(|e| {
@@ -743,7 +766,7 @@ impl CheckerApp {
                     match result {
                         Ok(config) => {
                             ctx.copy_text(config);
-                            self.message = "Original JSON copied".into();
+                            self.message = "Profile copied".into();
                         }
                         Err(error) => self.message = error,
                     }
@@ -778,11 +801,19 @@ impl CheckerApp {
                         self.controller = None;
                     }
                 }
-                UiEvent::Data {
+                UiEvent::Profiles {
                     profiles,
                     groups,
                     fingerprints,
                     source,
+                } => {
+                    self.controller = None;
+                    self.fingerprints = fingerprints;
+                    self.source = source;
+                    self.set_profiles(profiles, groups);
+                    self.message = "Profiles loaded. Connecting to Throne…".into();
+                }
+                UiEvent::Ready {
                     status,
                     controller,
                     proxy,
@@ -795,9 +826,10 @@ impl CheckerApp {
                     self.proxy = proxy;
                     self.controller = Some(controller);
                     self.release = status.version.clone().unwrap_or_default();
-                    self.fingerprints = fingerprints;
-                    self.source = source;
-                    self.set_profiles(profiles, groups);
+                    let active = status.profile.as_ref().map(|profile| profile.id);
+                    for row in &mut self.rows {
+                        row.profile.running = Some(active == Some(row.profile.id));
+                    }
                     let restored = self
                         .rows
                         .iter()
@@ -1363,7 +1395,7 @@ impl CheckerApp {
                             self.flags.label(ui,&r.profile.name)
                                 .on_hover_text(&r.profile.address)
                                 .context_menu(|ui| {
-                                    if ui.button(tr("Copy the original configuration JSON")).clicked()
+                                    if ui.button(tr("Copy link, or JSON for custom profiles")).clicked()
                                     {
                                         copy_id = Some(r.profile.id);
                                         ui.close();
@@ -1419,7 +1451,7 @@ impl CheckerApp {
                                     ));
                                 if ui
                                     .add_enabled(!self.copying, copy)
-                                    .on_hover_text(tr("Copy the original configuration JSON"))
+                                    .on_hover_text(tr("Copy link, or JSON for custom profiles"))
                                     .clicked()
                                 {
                                     copy_id = Some(r.profile.id);
@@ -1641,6 +1673,60 @@ fn activity_spinner(ui: &mut egui::Ui) -> egui::Response {
 #[cfg(test)]
 mod ui_logic_tests {
     use super::*;
+
+    #[tokio::test]
+    async fn profiles_arrive_before_an_unresponsive_throne_api() {
+        use base64::Engine as _;
+        let (_db_root, db) = crate::throne::db::tests::fixture();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let key = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode([7u8; 32]);
+        let c = rusqlite::Connection::open(&db.db_path).unwrap();
+        c.execute_batch("CREATE TABLE settings(key TEXT PRIMARY KEY,value TEXT)")
+            .unwrap();
+        for (name, value) in [
+            ("remote_api_port", port.to_string()),
+            ("remote_api_key", key),
+            ("remote_api_enable", "true".into()),
+        ] {
+            c.execute(
+                "INSERT INTO settings VALUES(?,?)",
+                rusqlite::params![name, value],
+            )
+            .unwrap();
+        }
+        let root = tempfile::tempdir().unwrap();
+        let paths = SandboxPaths::at(root.path()).unwrap();
+        std::fs::write(
+            paths.data.join("throne-source.txt"),
+            db.db_path.to_str().unwrap(),
+        )
+        .unwrap();
+        let manager = Arc::new(Sandbox::new(paths).unwrap());
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let tx = EventSender::from(tx);
+        let loading =
+            tokio::spawn(async move { CheckerApp::read_data(manager, String::new(), &tx).await });
+        let event = tokio::time::timeout(Duration::from_secs(1), rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        let UiEvent::Profiles {
+            profiles,
+            fingerprints,
+            ..
+        } = event
+        else {
+            panic!("Expected early profiles")
+        };
+        assert_eq!(profiles.len(), 3);
+        assert_eq!(fingerprints, db.fingerprints().unwrap());
+        assert!(
+            !loading.is_finished(),
+            "Profiles must be published before API readiness"
+        );
+        loading.abort();
+    }
 
     #[test]
     fn dragging_settings_past_both_window_edges_keeps_the_layout_stable() {

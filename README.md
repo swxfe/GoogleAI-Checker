@@ -16,7 +16,7 @@ Download a ZIP from [Releases](https://github.com/swxfe/GoogleAI-Checker/release
 
 1. Open the checker and select your Throne database.
 2. Choose a browser, click **Sign in**, then **Done** after signing in to Google.
-3. Select a group and click **Start**. Use **↻** to recheck one profile or **Copy** to copy its configuration JSON.
+3. Select a group and click **Start**. Use **↻** to recheck one profile or **Copy** to copy its share link, or JSON for custom profiles and types without a standard link.
 
 The checker runs parallel requests to AI Studio through the official Throne core. A model-list response confirms access; latency includes the proxy connection and HTTPS request. Results and sign-in data stay in `sandbox_data/` beside the app. Refresh after editing profiles in Throne.
 

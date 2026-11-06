@@ -69,6 +69,26 @@ impl Source {
             .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
             .collect::<Result<_, _>>()?;
         let setting = |key: &str| settings.get(key).map(String::as_str).unwrap_or("");
+        let group_has_route = transaction
+            .prepare("PRAGMA table_info(groups)")?
+            .query_map([], |row| row.get::<_, String>(1))?
+            .collect::<Result<Vec<_>, _>>()?
+            .iter()
+            .any(|column| column == "route_id");
+        let route_has_dns = transaction
+            .prepare("PRAGMA table_info(route_profiles)")?
+            .query_map([], |row| row.get::<_, String>(1))?
+            .collect::<Result<Vec<_>, _>>()?
+            .iter()
+            .any(|column| column == "custom_dns");
+        if route_has_dns {
+            let custom_dns: bool = transaction.query_row(
+                "SELECT EXISTS(SELECT 1 FROM route_profiles WHERE id=? AND custom_dns<>0)",
+                [setting("current_route_id").parse::<i64>().unwrap_or(0)],
+                |row| row.get(0),
+            )?;
+            native_when(custom_dns, "routing profile DNS settings")?;
+        }
         for key in [
             "mux_default_on",
             "xray_mux_default_on",
@@ -120,7 +140,18 @@ impl Source {
                     && Some(group) == profile.group,
                 "Profile identity changed"
             );
-            if front >= 0 || landing >= 0 || validate(&kind, &value).is_err() {
+            let own_route: bool = if group_has_route {
+                transaction.query_row(
+                    "SELECT route_id>=0 FROM groups WHERE id=?",
+                    [group],
+                    |row| row.get(0),
+                )?
+            } else {
+                false
+            };
+            // 1.4.0 can select a route and DNS policy per group. Let Throne
+            // generate those profiles rather than substitute the batch defaults.
+            if front >= 0 || landing >= 0 || own_route || validate(&kind, &value).is_err() {
                 native_profiles.insert(profile.id);
             }
             rows.push((profile.clone(), value));
@@ -506,6 +537,48 @@ mod tests {
                 .is::<NativeRequired>()
         );
         assert_eq!(db.fingerprints().unwrap(), fresh);
+    }
+    #[test]
+    fn group_routes_and_route_dns_use_the_official_generator() {
+        let (_root, db) = crate::throne::db::tests::fixture();
+        let writer = Connection::open(&db.db_path).unwrap();
+        writer
+            .execute_batch(
+                "ALTER TABLE groups ADD COLUMN front_proxy_id INTEGER DEFAULT -1;
+            ALTER TABLE groups ADD COLUMN landing_proxy_id INTEGER DEFAULT -1;
+            ALTER TABLE groups ADD COLUMN route_id INTEGER DEFAULT -1;
+            CREATE TABLE settings(key TEXT PRIMARY KEY,value TEXT);
+            INSERT INTO settings VALUES('current_route_id','7');
+            CREATE TABLE route_profiles(id INTEGER PRIMARY KEY,custom_dns INTEGER);
+            INSERT INTO route_profiles VALUES(7,0);",
+            )
+            .unwrap();
+        let profiles = vec![db.read_profiles().unwrap().remove(0)];
+        let hashes = db.fingerprints().unwrap();
+        assert!(
+            Source::read(&db.db_path, &profiles, &hashes)
+                .unwrap()
+                .native_profiles
+                .is_empty()
+        );
+        writer
+            .execute("UPDATE groups SET route_id=7 WHERE id=5", [])
+            .unwrap();
+        assert_eq!(
+            Source::read(&db.db_path, &profiles, &hashes)
+                .unwrap()
+                .native_profiles,
+            HashSet::from([1])
+        );
+        writer
+            .execute("UPDATE route_profiles SET custom_dns=1 WHERE id=7", [])
+            .unwrap();
+        assert!(
+            Source::read(&db.db_path, &profiles, &hashes)
+                .err()
+                .unwrap()
+                .is::<NativeRequired>()
+        );
     }
     #[test]
     #[ignore = "Read-only installed DB compatibility audit; no processes or network requests; requires THRONE_TEST_DB"]

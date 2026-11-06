@@ -45,7 +45,7 @@
   "Active": "فعال",
   "Ready": "آماده",
   "Copy": "کپی",
-  "Copy the original configuration JSON": "کپی JSON اصلی پیکربندی",
+  "Copy link, or JSON for custom profiles": "کپی پیوند؛ برای پیکربندی سفارشی، JSON",
   "Recheck this node only": "فقط بررسی دوباره این گره",
   "Pending": "در انتظار",
   "Checking…": "در حال بررسی…",
@@ -77,7 +77,7 @@
   "Loading…": "در حال بارگذاری…",
   "Scanning…": "در حال بررسی…",
   "Opening browser…": "در حال باز کردن مرورگر…",
-  "Original JSON copied": "JSON اصلی کپی شد",
+  "Profile copied": "پروفایل کپی شد",
   "Sign in using the browser, then click Done": "در مرورگر وارد شوید، سپس «انجام شد» را بزنید",
   "Sign in to Google before starting a scan": "پیش از شروع بررسی وارد Google شوید",
   "Select an installed browser": "یک مرورگر نصب‌شده انتخاب کنید",
@@ -191,5 +191,6 @@
   "Nodes: %{a0}   Available: %{a1}   AI unavailable: %{a2}": "نودها: %{a0}   در دسترس: %{a1}   هوش مصنوعی ناموجود: %{a2}",
   "Confirmation request: %{result}; first response: %{first}": "درخواست تأیید: %{result}؛ پاسخ نخست: %{first}",
   "Throne is missing from ./bin/. Extract the complete release bundle.": "Throne در ./bin/ موجود نیست. بستهٔ کامل انتشار را استخراج کنید.",
-  "Select a Throne database or import a subscription to get started": "یک پایگاه دادهٔ Throne انتخاب کنید یا اشتراک وارد کنید"
+  "Select a Throne database or import a subscription to get started": "یک پایگاه دادهٔ Throne انتخاب کنید یا اشتراک وارد کنید",
+  "Profiles loaded. Connecting to Throne…": "پروفایل‌ها بارگذاری شدند. در حال اتصال به Throne…"
 }

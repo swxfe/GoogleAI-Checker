@@ -132,6 +132,7 @@ impl BrowserDetector {
     }
 
     /// Returns the best detected browser executable
+    #[cfg(test)]
     pub fn find_best() -> Option<PathBuf> {
         let all = Self::detect_all();
         // Prefer edge on windows or chrome, otherwise first available
@@ -142,34 +143,77 @@ impl BrowserDetector {
     }
 
     #[cfg(target_os = "windows")]
+    fn registry_browser(
+        hive: windows_sys::Win32::System::Registry::HKEY,
+        key: &str,
+    ) -> Option<PathBuf> {
+        use windows_sys::Win32::System::Registry::{
+            RRF_RT_REG_EXPAND_SZ, RRF_RT_REG_SZ, RRF_SUBKEY_WOW6432KEY, RRF_SUBKEY_WOW6464KEY,
+            RegGetValueW,
+        };
+        let key: Vec<u16> = key.encode_utf16().chain(Some(0)).collect();
+        for view in [RRF_SUBKEY_WOW6464KEY, RRF_SUBKEY_WOW6432KEY] {
+            let flags = RRF_RT_REG_SZ | RRF_RT_REG_EXPAND_SZ | view;
+            let mut size = 0;
+            // Read App Paths directly; no shell process or persistent registry handle.
+            unsafe {
+                if RegGetValueW(
+                    hive,
+                    key.as_ptr(),
+                    std::ptr::null(),
+                    flags,
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    &mut size,
+                ) != 0
+                    || size == 0
+                    || size > 65536
+                {
+                    continue;
+                }
+                let mut value = vec![0u16; (size as usize).div_ceil(2)];
+                if RegGetValueW(
+                    hive,
+                    key.as_ptr(),
+                    std::ptr::null(),
+                    flags,
+                    std::ptr::null_mut(),
+                    value.as_mut_ptr().cast(),
+                    &mut size,
+                ) != 0
+                {
+                    continue;
+                }
+                let length = value.iter().position(|c| *c == 0).unwrap_or(value.len());
+                let path = PathBuf::from(
+                    String::from_utf16_lossy(&value[..length])
+                        .trim()
+                        .trim_matches('"'),
+                );
+                if path.is_file() {
+                    return Some(path);
+                }
+            }
+        }
+        None
+    }
+
+    #[cfg(target_os = "windows")]
     fn detect_windows(list: &mut Vec<DetectedBrowser>) {
-        use std::os::windows::process::CommandExt;
+        use windows_sys::Win32::System::Registry::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE};
         for (exe, name) in [
             ("msedge.exe", "Microsoft Edge"),
             ("chrome.exe", "Google Chrome"),
             ("brave.exe", "Brave Browser"),
         ] {
-            for hive in ["HKCU", "HKLM"] {
-                let key =
-                    format!(r"{hive}\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\{exe}");
-                if let Ok(out) = std::process::Command::new("reg.exe")
-                    .creation_flags(0x08000000)
-                    .args(["query", &key, "/ve"])
-                    .output()
-                    && out.status.success()
-                {
-                    for line in String::from_utf8_lossy(&out.stdout).lines() {
-                        if let Some((_, value)) = line.split_once("REG_SZ") {
-                            let path = PathBuf::from(value.trim().trim_matches('"'));
-                            if path.is_file() {
-                                list.push(DetectedBrowser {
-                                    name: name.into(),
-                                    path,
-                                    is_default_candidate: exe == "msedge.exe",
-                                });
-                            }
-                        }
-                    }
+            let key = format!(r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\{exe}");
+            for hive in [HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE] {
+                if let Some(path) = Self::registry_browser(hive, &key) {
+                    list.push(DetectedBrowser {
+                        name: name.into(),
+                        path,
+                        is_default_candidate: exe == "msedge.exe",
+                    });
                 }
             }
         }
@@ -322,6 +366,23 @@ impl BrowserDetector {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[ignore = "Local browser discovery timing; no browser is launched"]
+    fn browser_discovery_benchmark() {
+        let mut times = Vec::new();
+        for _ in 0..7 {
+            let start = std::time::Instant::now();
+            let browsers = BrowserDetector::detect_all();
+            std::hint::black_box(browsers);
+            times.push(start.elapsed().as_secs_f64() * 1000.0);
+        }
+        times.sort_by(f64::total_cmp);
+        println!(
+            "Browser discovery milliseconds: median={:.2}, max={:.2}",
+            times[3], times[6]
+        );
+    }
 
     #[test]
     fn test_detect_browsers() {

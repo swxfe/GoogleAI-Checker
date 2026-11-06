@@ -1,5 +1,103 @@
 use serde::{Deserialize, Serialize};
 
+#[derive(Deserialize)]
+pub struct ProfileConfig {
+    pub id: i64,
+    #[serde(rename = "type")]
+    pub profile_type: String,
+    pub outbound: serde_json::Value,
+    #[serde(default)]
+    pub link: String,
+}
+
+impl ProfileConfig {
+    pub fn clipboard_text(&self) -> anyhow::Result<String> {
+        let link = self.link.trim();
+        if self.profile_type != "custom"
+            && self.outbound["type"] != "custom"
+            && let Ok(url) = url::Url::parse(link)
+            && !matches!(url.scheme(), "throne" | "json")
+        {
+            return Ok(link.to_owned());
+        }
+        super::db::configuration_json(self.outbound.clone())
+    }
+}
+
+#[cfg(test)]
+mod copy_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn every_standard_link_is_copied_as_exported_by_throne() {
+        for scheme in [
+            "vless",
+            "vmess",
+            "trojan",
+            "ss",
+            "ssr",
+            "socks4",
+            "socks4a",
+            "socks5",
+            "http",
+            "https",
+            "tuic",
+            "hysteria",
+            "hysteria2",
+            "anytls",
+            "wireguard",
+            "ssh",
+            "future-protocol",
+        ] {
+            let link = format!(
+                "{scheme}://fixture@127.0.0.1:9?option=keep%20this#%D0%A2%D0%B5%D1%81%D1%82"
+            );
+            let config = ProfileConfig {
+                id: 1,
+                profile_type: scheme.into(),
+                outbound: json!({"type":scheme}),
+                link: link.clone(),
+            };
+            assert_eq!(config.clipboard_text().unwrap(), link);
+        }
+    }
+
+    #[test]
+    fn custom_and_profiles_without_standard_links_copy_json() {
+        let full: serde_json::Value =
+            serde_json::from_str(include_str!("../../tests/fixtures/custom-xray-full.json"))
+                .unwrap();
+        for subtype in ["outbound", "fullconfig", "xrayoutbound", "xrayfullconfig"] {
+            let config = ProfileConfig {
+                id: 1,
+                profile_type: "custom".into(),
+                outbound: json!({"type":"custom","subtype":subtype,"config":full.to_string()}),
+                link: "throne://add/fixture".into(),
+            };
+            assert_eq!(
+                serde_json::from_str::<serde_json::Value>(&config.clipboard_text().unwrap())
+                    .unwrap(),
+                full
+            );
+        }
+        for link in ["", "throne://add/fixture", "json://fixture", "?bare=query"] {
+            let outbound = json!({"type":"future","settings":{"keep":true}});
+            let config = ProfileConfig {
+                id: 1,
+                profile_type: "future".into(),
+                outbound: outbound.clone(),
+                link: link.into(),
+            };
+            assert_eq!(
+                serde_json::from_str::<serde_json::Value>(&config.clipboard_text().unwrap())
+                    .unwrap(),
+                outbound
+            );
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Profile {
     pub id: i64,
@@ -77,11 +175,13 @@ pub struct Status {
     pub version: Option<String>,
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProfilesResponse {
     pub profiles: Vec<Profile>,
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GroupsResponse {
     pub groups: Vec<Group>,

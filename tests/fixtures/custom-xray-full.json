@@ -1,0 +1,54 @@
+{
+    "dns": {
+        "queryStrategy": "UseIP",
+        "servers": ["1.0.0.1", "8.8.4.4"]
+    },
+    "outbounds": [
+        {
+            "protocol": "vless",
+            "settings": {
+                "vnext": [{
+                    "address": "proxy.example.test",
+                    "port": 443,
+                    "users": [{
+                        "encryption": "none",
+                        "flow": "xtls-rprx-vision",
+                        "id": "00000000-0000-4000-8000-000000000001"
+                    }]
+                }]
+            },
+            "streamSettings": {
+                "finalmask": {
+                    "tcp": [{
+                        "settings": {"delay": "8-25", "length": "6-12", "maxSplit": "6-12", "packets": "tlshello"},
+                        "type": "fragment"
+                    }]
+                },
+                "network": "tcp",
+                "realitySettings": {
+                    "fingerprint": "firefox",
+                    "publicKey": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+                    "serverName": "proxy.example.test",
+                    "shortId": "abcd"
+                },
+                "security": "reality",
+                "tcpSettings": {}
+            },
+            "tag": "proxy"
+        },
+        {"protocol": "freedom", "tag": "direct"},
+        {"protocol": "blackhole", "tag": "block"}
+    ],
+    "remarks": "🇦🇪 ОАЭ — fixture",
+    "routing": {
+        "domainMatcher": "hybrid",
+        "domainStrategy": "IPIfNonMatch",
+        "rules": [
+            {"outboundTag": "block", "protocol": ["bittorrent"], "type": "field"},
+            {"domain": ["domain:example.test"], "outboundTag": "proxy", "type": "field"},
+            {"ip": ["10.0.0.0/8", "192.168.0.0/16", "fc00::/7"], "outboundTag": "direct", "type": "field"},
+            {"domain": ["geosite:category-ru", "domain:ru", "domain:su"], "outboundTag": "direct", "type": "field"},
+            {"network": "tcp,udp", "outboundTag": "proxy", "type": "field"}
+        ]
+    }
+}
